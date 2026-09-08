@@ -170,9 +170,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
         // Timer ring
         TimerRing(state)
 
-        Spacer(Modifier.height(8.dp))
-
-        // Stage progress
+        Spacer(Modifier.height(12.dp))
         if (state.running || state.phase == Phase.DONE) {
             StageProgress(state)
         }
