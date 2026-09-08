@@ -1,6 +1,4 @@
-package com.spineexercise.timer
-
-import androidx.compose.ui.graphics.Color
+﻿package com.spineexercise.timer
 
 // ===================== Data Models =====================
 
@@ -30,6 +28,11 @@ object Config {
         ),
     )
 
+    // Non-throwing, non-"!!" accessors
+    fun stagesOf(mode: Mode): List<ExerciseStage> = stages.getValue(mode)
+
+    fun stageOf(mode: Mode, si: Int): ExerciseStage = stagesOf(mode)[si]
+
     val tips = mapOf(
         Mode.GENTLE to listOf(
             "力度：只需 20%～30% 的轻微力量，绝不能使出全力",
@@ -49,30 +52,12 @@ object Config {
     )
 
     fun totalGroups(mode: Mode): Int =
-        stages[mode]!!.sumOf { it.dirs.size * it.groups }
+        stagesOf(mode).sumOf { it.dirs.size * it.groups }
 
     fun completedGroups(mode: Mode, si: Int, gi: Int): Int {
         var c = 0
-        val st = stages[mode]!!
+        val st = stagesOf(mode)
         for (i in 0 until si) c += st[i].dirs.size * st[i].groups
         return c + gi
-    }
-}
-
-// ===================== Colors =====================
-
-object PhaseColors {
-    val contract = Color(0xFFFF7043)
-    val relax = Color(0xFF4FC3F7)
-    val prepare = Color(0xFFFFCA28)
-    val idle = Color(0xFF607D8B)
-    val done = Color(0xFF9CCC65)
-
-    fun forPhase(phase: Phase) = when (phase) {
-        Phase.CONTRACT -> contract
-        Phase.RELAX -> relax
-        Phase.PREPARE -> prepare
-        Phase.IDLE -> idle
-        Phase.DONE -> done
     }
 }

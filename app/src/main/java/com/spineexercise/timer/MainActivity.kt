@@ -1,9 +1,11 @@
 package com.spineexercise.timer
 
 import android.os.Bundle
+import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -13,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -23,12 +26,14 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -52,6 +57,7 @@ private val AccentOrange = Color(0xFFFF7043)
 private val DoneGreen = Color(0xFF66BB6A)
 private val TipHeaderColor = Color(0xFFFFAB91)
 private val SegDimColor = Color.White.copy(alpha = 0.1f)
+private val ContentColor = Color(0xFFE8EEF2)
 
 private val CardShape = RoundedCornerShape(16.dp)
 private val BtnShape = RoundedCornerShape(50.dp)
@@ -66,16 +72,44 @@ fun AppTheme(content: @Composable () -> Unit) {
         primary = AccentCyan, secondary = AccentOrange,
         background = Color(0xFF1A2A3A), surface = Color(0xFF2D3E50),
         onPrimary = Color.White, onSecondary = Color.White,
-        onBackground = Color(0xFFE8EEF2), onSurface = Color(0xFFE8EEF2),
+        onBackground = ContentColor, onSurface = ContentColor,
     )
     MaterialTheme(colorScheme = colorScheme, content = content)
+}
+
+// ===================== TTS Voice =====================
+
+// Chinese voice announcements for button taps (start / pause / resume / reset).
+// Returns a speak() lambda; no-op until the engine finishes initializing.
+@Composable
+fun rememberTtsSpeaker(): (String) -> Unit {
+    val context = LocalContext.current
+    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
+    var ready by remember { mutableStateOf(false) }
+
+    DisposableEffect(context) {
+        val engine = TextToSpeech(context) { status -> ready = status == TextToSpeech.SUCCESS }
+        tts = engine
+        onDispose { engine.shutdown() }
+    }
+
+    return remember(ready) {
+        { text: String ->
+            val engine = tts
+            if (engine != null && ready) {
+                engine.language = Locale.SIMPLIFIED_CHINESE
+                engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "btn_$text")
+            }
+        }
+    }
 }
 
 // ===================== Navigation =====================
 
 @Composable
 fun AppNavigation() {
-    var selectedMode by remember { mutableStateOf<Mode?>(null) }
+    // rememberSaveable: survives rotation / process recreation
+    var selectedMode by rememberSaveable { mutableStateOf<Mode?>(null) }
     if (selectedMode == null) ModeSelectScreen { selectedMode = it }
     else TimerScreen(mode = selectedMode!!, onBack = { selectedMode = null })
 }
@@ -132,31 +166,35 @@ fun ModeCard(emoji: String, title: String, desc: String, tips: String, color: Co
 @Composable
 fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
+    val speak = rememberTtsSpeaker()
 
-    LaunchedEffect(Unit) { vm.setMode(mode) }
-    DisposableEffect(Unit) { onDispose { vm.resetWorkout() } }
+    // System gesture/button back exits the workout (resets it first)
+    BackHandler { vm.resetWorkout(); onBack() }
 
+    // Only switch mode when it actually changed; the ViewModel survives rotation,
+    // so a running workout is not reset by configuration changes.
+    LaunchedEffect(mode) { if (vm.state.value.mode != mode) vm.setMode(mode) }
+
+    Box(Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier.fillMaxSize().background(BgBrush)
             .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Top spacing
+        // Top spacing: title near top with 48dp margin
         Spacer(Modifier.height(48.dp))
 
         // Header
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            TextButton(onClick = onBack) { Text("← 返回", fontSize = 14.sp, color = HintColor) }
             Spacer(Modifier.weight(1f))
             TipsButton(mode)
         }
 
         Spacer(Modifier.height(8.dp))
 
-        // Phase text (between header and ring, upper third)
-        Spacer(Modifier.height(48.dp))
+        // Phase text (title area, pinned near top)
         Text(state.phaseText, fontSize = 30.sp, fontWeight = FontWeight.Bold,
-            color = Color(0xFFE8EEF2), letterSpacing = 2.sp)
+            color = ContentColor, letterSpacing = 2.sp)
 
         Spacer(Modifier.height(4.dp))
 
@@ -164,8 +202,8 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
         Text(state.phaseHint, fontSize = 14.sp, color = HintColor, textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 20.dp).heightIn(min = 36.dp))
 
-        // Upper spacer (ring closer to center)
-        Spacer(Modifier.weight(1f))
+        // Upper spacer (smaller weight pushes ring slightly above center)
+        Spacer(Modifier.weight(0.85f))
 
         // Timer ring
         TimerRing(state)
@@ -175,8 +213,9 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
             StageProgress(state)
         }
 
-        // Lower spacer (push controls down)
-        Spacer(Modifier.weight(1f))
+        // Lower spacer (larger weight keeps ring above center, pushes controls down)
+        Spacer(Modifier.weight(1.15f))
+        Spacer(Modifier.height(20.dp))
 
         // Controls
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth(),
@@ -188,6 +227,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
             }
             Button(
                 onClick = {
+                    speak(btnText)
                     if (!state.running) vm.startWorkout()
                     else vm.togglePause()
                 },
@@ -198,7 +238,10 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
                 Text(btnText, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, letterSpacing = 1.sp)
             }
             OutlinedButton(
-                onClick = { vm.resetWorkout() },
+                onClick = {
+                    speak("重置")
+                    vm.resetWorkout()
+                },
                 modifier = Modifier.weight(1f).height(52.dp),
                 shape = BtnShape,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor),
@@ -208,6 +251,12 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
         }
 
         Spacer(Modifier.height(34.dp))
+    }
+
+        // Completion overlay when the whole workout is finished
+        if (state.phase == Phase.DONE) {
+            DoneOverlay(onAgain = { vm.resetWorkout(); vm.startWorkout() }, onBack = { vm.resetWorkout(); onBack() })
+        }
     }
 }
 
@@ -285,8 +334,16 @@ fun StageProgress(state: TimerState) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("📍 ${state.stageName} (${completed + 1}/$total)",
-                fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFFE8EEF2))
+            // Dynamic label: reflect the current phase instead of the static stage name
+            val label = when (state.phase) {
+                Phase.RELAX -> "🍃 放松"
+                Phase.CONTRACT -> if (state.mode == Mode.ISOMETRIC) "💪 ${state.stageName} · ${state.handName}"
+                    else "💪 ${state.handName}发力"
+                Phase.DONE -> "🎉 完成"
+                else -> "📍 ${state.stageName}"
+            }
+            Text("$label (${completed + 1}/$total)",
+                fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
             Text("⏱ ${state.elapsedText}",
                 fontSize = 14.sp, fontWeight = FontWeight.Medium, color = HintColor)
         }
@@ -342,3 +399,43 @@ fun TipsButton(mode: Mode) {
         )
     }
 }
+
+
+// ===================== Completion Overlay =====================
+
+@Composable
+fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
+    // Pop-in animation
+    var shown by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { shown = true }
+    val scale by animateFloatAsState(if (shown) 1f else 0.6f, animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy), label = "pop")
+
+    Box(
+        modifier = Modifier.fillMaxSize().background(Color(0xCC0D1B2A)),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            shape = TipShape,
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF2D3E50)),
+            modifier = Modifier.padding(32.dp).scale(scale)
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 32.dp, vertical = 28.dp)) {
+                Text("🎉", fontSize = 56.sp)
+                Spacer(Modifier.height(12.dp))
+                Text("锻炼完成！", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = AccentCyan, letterSpacing = 2.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("做得很棒，请缓慢起身，避免突然动作", fontSize = 14.sp, color = HintColor, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(24.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+                    Button(onClick = onAgain, shape = BtnShape, colors = ButtonDefaults.buttonColors(containerColor = AccentBtn)) {
+                        Text("再练一次", fontWeight = FontWeight.SemiBold)
+                    }
+                    OutlinedButton(onClick = onBack, shape = BtnShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor)) {
+                        Text("返回", fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+        }
+    }
+}
+

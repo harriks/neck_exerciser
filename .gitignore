@@ -1,1 +1,14 @@
-/app/
+# Gradle / build artifacts
+.gradle/
+build/
+app/build/
+
+# Machine-local config (contains SDK path & signing passwords)
+local.properties
+
+# Logs
+*.log
+
+# IDE
+.idea/
+

@@ -1,4 +1,4 @@
-# 颈椎锻炼计时器 - 技术规格
+﻿# 颈椎锻炼计时器 - 技术规格
 
 ## 1. 项目概览
 
@@ -198,9 +198,33 @@ paused: 是否暂停
 - 单方向模式：gi++ 直到 groups 后切阶段
 - singleSide 标记：做完一个方向的全部组才切方向（已移除）
 
-## 5. 已知限制
+## 5. 架构（2026-09 重构后）
+
+- **WorkoutEngine.kt**：纯 Kotlin 状态机（无 Android 依赖）
+  - 锚点计时：每个阶段记录绝对结束时间戳，倒计时/总用时零漂移
+  - 事件输出：语音/音效以 `EngineEvent`（Speak/Sfx）形式发出，由 ViewModel 播放
+  - `TimerState` + `buildState()` 工厂也在此文件；`completedGroups` 已预计算
+- **TimerViewModel.kt**：只负责桥接 —— 200ms tick 驱动 engine，将事件转为
+  ToneGenerator/TTS 调用；时钟用 `SystemClock.elapsedRealtime()`（单调时钟）
+- **Model.kt**：`Config.stagesOf()/stageOf()` 取代了 `!!` 访问
+- **Colors.kt**：`PhaseColors` 从 Model.kt 迁出，Model 保持纯 Kotlin 可单测
+- **MainActivity.kt**：`rememberSaveable` 保存所选模式；旋转屏幕不再重置锻炼
+  （`LaunchedEffect(mode)` 仅在模式变化时 setMode；返回按钮负责 reset）
+- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt`（14 个用例，JUnit4）
+
+## 6. 已知限制
 
 - Web 版依赖浏览器 Web Audio API，部分浏览器首次需要用户交互才能播放
 - Android 版项目路径不能包含中文字符（已通过 `android.overridePathCheck=true` 绕过）
 - Android 版 Gradle 构建需要网络下载依赖
 - 图标为矢量绘制的颈椎图形，非专业设计
+
+## 7. 运行单元测试
+
+Gradle 测试 worker 在非 ASCII（中文）项目路径下无法加载测试类（编译不受影响）。
+使用仓库根目录的 `run-tests.ps1`，它会将源码同步到 %TEMP% 下的 ASCII 路径运行：
+
+```
+powershell -File run-tests.ps1        # 运行后清理临时目录
+powershell -File run-tests.ps1 -Keep # 保留临时目录便于调试
+```
