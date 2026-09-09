@@ -125,9 +125,12 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         val now = nowMs()
         accumulatedMs = 0L
         segmentStartMs = now
-        _state = buildState(s.mode, phase = Phase.PREPARE, countdown = 3, running = true)
-        phaseEndMs = now + 3000L
-        pendingEvents += EngineEvent.Speak("开始，准备")
+        _state = buildState(s.mode, phase = Phase.PREPARE, countdown = Config.prepareSec, running = true)
+        phaseEndMs = now + Config.prepareSec * 1000L
+        pendingEvents += EngineEvent.Speak(
+            if (s.mode == Mode.ISOMETRIC) "${stageTalk(Config.stageOf(s.mode, 0))}开始"
+            else "开始，准备"
+        )
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.START)
     }
 
@@ -213,10 +216,9 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
     }
 
     private fun beginContract(now: Long, s: TimerState) {
-        val verb = if (s.repCount == 0 && s.gi == 0 && s.si == 0) "用" else "换"
         _state = s.copy(phase = Phase.CONTRACT, countdown = s.contractSec)
         phaseEndMs = now + s.contractSec * 1000L
-        pendingEvents += EngineEvent.Speak("$verb${s.handName}")
+        pendingEvents += EngineEvent.Speak("请换${s.handName}发力")
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.SWITCH)
     }
 
@@ -233,7 +235,14 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
                 countdown = st.contractSec, phase = Phase.CONTRACT, running = true,
                 elapsed = elapsedSec)
             phaseEndMs = now + st.contractSec * 1000L
-            pendingEvents += EngineEvent.Speak("换${st.dirs[newDi]}")
+            // Stage transition announcement (merged into one utterance: TTS flushes queue).
+            // Uniform concise cue: only the next stage's "开始" (no end/hand hints).
+            if (newSi != s.si) {
+                pendingEvents += EngineEvent.Speak("${stageTalk(st)}开始")
+            } else if (st.dirs.size > 1) {
+                // Within-stage hand cue; single-direction stages (弹力带) only announce on entry
+                pendingEvents += EngineEvent.Speak("请换${st.dirs[newDi]}发力")
+            }
         } else {
             if (newRep >= s.groupCount) { finish(elapsedSec, newRep); return }
             val newDi = (s.di + 1) % s.dirCount
@@ -241,12 +250,16 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
                 countdown = s.contractSec, phase = Phase.CONTRACT, running = true,
                 elapsed = elapsedSec)
             phaseEndMs = now + s.contractSec * 1000L
-            pendingEvents += EngineEvent.Speak("换${Config.stageOf(s.mode, s.si).dirs[newDi]}")
+            pendingEvents += EngineEvent.Speak("请换${Config.stageOf(s.mode, s.si).dirs[newDi]}发力")
         }
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.SWITCH)
     }
 
     private data class AdvanceResult(val gi: Int, val di: Int, val si: Int, val hasMore: Boolean)
+
+    // Announcement name: ensure the "训练" suffix appears exactly once.
+    private fun stageTalk(st: ExerciseStage): String =
+        if (st.name.endsWith("训练")) st.name else "${st.name}训练"
 
     private fun advanceGroup(s: TimerState): AdvanceResult {
         var gi = s.gi + 1

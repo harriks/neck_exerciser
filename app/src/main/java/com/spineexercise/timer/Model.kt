@@ -1,4 +1,4 @@
-﻿package com.spineexercise.timer
+package com.spineexercise.timer
 
 // ===================== Data Models =====================
 
@@ -17,16 +17,16 @@ enum class Phase { IDLE, PREPARE, CONTRACT, RELAX, DONE }
 // ===================== Config =====================
 
 object Config {
-    val stages = mapOf(
-        Mode.GENTLE to listOf(
-            ExerciseStage("温和发力", listOf("左手", "右手"), 8, 5, 8),
-        ),
-        Mode.ISOMETRIC to listOf(
-            ExerciseStage("正向抗阻", listOf("右手", "左手"), 15, 15, 3),
-            ExerciseStage("侧向抗阻", listOf("右手", "左手"), 15, 15, 3),
-            ExerciseStage("弹力带训练", listOf("弹力带"), 15, 30, 3),
-        ),
-    )
+    // Timing (durations/groups/prepare) is sourced from JSON via TimingConfig,
+    // so all countdown values can be tuned in one JSON block.
+    var timing: TimingConfig = TimingConfig.default()
+
+    /** Reload all durations from a JSON config string. */
+    fun configure(json: String) { timing = TimingConfig.fromJson(json) }
+
+    val prepareSec: Int get() = timing.prepareSec
+
+    val stages: Map<Mode, List<ExerciseStage>> get() = timing.stages
 
     // Non-throwing, non-"!!" accessors
     fun stagesOf(mode: Mode): List<ExerciseStage> = stages.getValue(mode)

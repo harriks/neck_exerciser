@@ -1,0 +1,13 @@
+{
+  "prepareSec": 3,
+  "modes": {
+    "gentle": [
+      { "name": "舒缓锻炼", "dirs": ["左手", "右手"], "contractSec": 8, "relaxSec": 5, "groups": 8 }
+    ],
+    "isometric": [
+      { "name": "正向抗阻", "dirs": ["右手", "左手"], "contractSec": 15, "relaxSec": 15, "groups": 3 },
+      { "name": "侧向抗阻", "dirs": ["右手", "左手"], "contractSec": 15, "relaxSec": 15, "groups": 3 },
+      { "name": "反向抗阻", "dirs": ["弹力带"], "contractSec": 15, "relaxSec": 30, "groups": 3 }
+    ]
+  }
+}

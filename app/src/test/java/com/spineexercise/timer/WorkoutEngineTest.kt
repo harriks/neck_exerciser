@@ -146,6 +146,48 @@ class WorkoutEngineTest {
         assertEquals(30, engine.state.relaxSec)
     }
 
+    @Test
+    fun `isometric start announces first stage`() {
+        engine.setMode(Mode.ISOMETRIC)
+        engine.start()
+        val events = engine.drainEvents()
+        assertTrue(events.contains(EngineEvent.Speak("正向抗阻训练开始")))
+    }
+
+    @Test
+    fun `isometric stage transition announces next stage only`() {
+        engine.setMode(Mode.ISOMETRIC)
+        engine.start()
+        advanceSeconds(3 + 6 * 30) // stage 1 done -> stage 2 first contract
+        val events = engine.drainEvents()
+        assertTrue(events.contains(EngineEvent.Speak("侧向抗阻训练开始")))
+    }
+
+    @Test
+    fun `band stage only announces on first entry`() {
+        engine.setMode(Mode.ISOMETRIC)
+        engine.start()
+        advanceSeconds(3 + 6 * 30 + 6 * 30) // reach band stage, first contract
+        val entry = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
+        assertTrue("entry speaks=$entry", entry.contains("弹力带训练开始"))
+        advanceSeconds(15 + 30) // band group 1 done -> group 2 contract
+        val events = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
+        // No per-group announcement inside the single-direction band stage
+        assertTrue("group2 speaks=$events", events.none { it.contains("弹力带") })
+        assertTrue("group2 speaks=$events", events.none { it.contains("请换") })
+    }
+
+    @Test
+    fun `isometric finish announces completion`() {
+        engine.setMode(Mode.ISOMETRIC)
+        engine.start()
+        val total = 3 + 6 * 30 + 6 * 30 + 3 * 45
+        advanceSeconds(total)
+        val events = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
+        assertTrue("finish speaks=$events",
+            events.any { it.contains("恭喜，全部完成") })
+    }
+
     // ---------- Pause / reset ----------
 
     @Test

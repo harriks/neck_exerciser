@@ -269,7 +269,7 @@ fun TimerRing(state: TimerState) {
         Phase.IDLE -> 0f
         else -> {
             val total = when (state.phase) {
-                Phase.PREPARE -> 3
+                Phase.PREPARE -> Config.prepareSec
                 Phase.CONTRACT -> state.contractSec
                 Phase.RELAX -> state.relaxSec
                 else -> 1
