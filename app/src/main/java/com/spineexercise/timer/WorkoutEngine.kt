@@ -264,7 +264,9 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
                 pendingEvents += EngineEvent.Speak("继续训练")
             }
         } else {
-            if (newRep >= s.groupCount) { finish(elapsedSec, newRep); return }
+            // groups is per-direction (see CLAUDE.md §3): gentle alternates every
+            // rep, so the stage finishes after dirs × groups total reps.
+            if (newRep >= s.dirCount * s.groupCount) { finish(elapsedSec, newRep); return }
             val newDi = (s.di + 1) % s.dirCount
             _state = buildState(s.mode, s.si, newDi, newRep, newRep,
                 countdown = s.contractSec, phase = Phase.CONTRACT, running = true,

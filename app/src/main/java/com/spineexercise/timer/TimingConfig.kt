@@ -1,4 +1,4 @@
-﻿package com.spineexercise.timer
+package com.spineexercise.timer
 
 // ===================== Timing Configuration =====================
 // All countdown durations (contract / relax / groups / prepare) live in a
@@ -13,7 +13,7 @@ val DEFAULT_TIMING_JSON = """
   "prepareSec": 3,
   "modes": {
     "gentle": [
-      { "name": "温和发力", "dirs": ["左手", "右手"], "contractSec": 8, "relaxSec": 5, "groups": 8 }
+      { "name": "温和发力", "dirs": ["左手", "右手"], "contractSec": 8, "relaxSec": 5, "groups": 4 }
     ],
     "isometric": [
       { "name": "正向抗阻", "dirs": ["右手", "左手"], "contractSec": 15, "relaxSec": 15, "groups": 3 },

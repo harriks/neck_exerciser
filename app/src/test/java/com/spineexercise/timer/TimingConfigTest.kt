@@ -17,7 +17,7 @@ class TimingConfigTest {
         assertEquals(listOf("左手", "右手"), gentle[0].dirs)
         assertEquals(8, gentle[0].contractSec)
         assertEquals(5, gentle[0].relaxSec)
-        assertEquals(8, gentle[0].groups)
+        assertEquals(4, gentle[0].groups)
         val iso = c.stages.getValue(Mode.ISOMETRIC)
         assertEquals(3, iso.size)
         assertEquals(15, iso[0].contractSec)

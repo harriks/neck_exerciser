@@ -63,6 +63,18 @@ class WorkoutEngineTest {
     }
 
     @Test
+    fun `gentle progress bar totals 8 segments and fills with reps`() {
+        // Regression: the bar once showed dirs x groups = 16 while the engine
+        // ran groups total reps, leaving half the bar permanently dim.
+        engine.setMode(Mode.GENTLE)
+        engine.start()
+        assertEquals(8, engine.state.totalGroupsAll)
+        advanceSeconds(3 + (8 + 5)) // first rep done -> in rep 2
+        assertEquals(1, engine.state.completedGroups)
+        assertEquals(2, engine.state.completedGroups + 1)
+    }
+
+    @Test
     fun `gentle hand alternates left right each rep`() {
         engine.setMode(Mode.GENTLE)
         engine.start()

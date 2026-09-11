@@ -2,7 +2,7 @@
   "prepareSec": 3,
   "modes": {
     "gentle": [
-      { "name": "舒缓锻炼", "dirs": ["左手", "右手"], "contractSec": 8, "relaxSec": 5, "groups": 8 }
+      { "name": "舒缓锻炼", "dirs": ["左手", "右手"], "contractSec": 8, "relaxSec": 5, "groups": 4 }
     ],
     "isometric": [
       { "name": "正向抗阻", "dirs": ["右手", "左手"], "contractSec": 15, "relaxSec": 15, "groups": 3 },
