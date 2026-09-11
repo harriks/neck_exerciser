@@ -515,7 +515,7 @@ fun CalendarShortcutButton(onOpen: () -> Unit) {
 
 @Composable
 fun CalendarScreen(raw: String, onBack: () -> Unit) {
-    val log = remember { CheckInLog.parse(raw) }
+    val log = remember(raw) { CheckInLog.parse(raw) }
     var ym by remember { mutableStateOf(YearMonth.now()) }
     BackHandler { onBack() }
 
@@ -538,8 +538,31 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(8.dp))
+        val today = LocalDate.now()
+        Text("🔥 连续 ${log.currentStreak(today)} 天 · 最长 ${log.longestStreak()} 天",
+            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = AccentOrange)
+        Spacer(Modifier.height(4.dp))
         Text("本月打卡 ${log.countInMonth(ym)} 天 · 累计 ${log.total} 天",
             fontSize = 14.sp, color = HintColor)
+
+        Spacer(Modifier.height(12.dp))
+
+        // Milestone badges: reached = full color, else dimmed with days remaining
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically) {
+            log.milestones().forEach { m ->
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(m.emoji, fontSize = 22.sp,
+                        color = if (m.reached) ContentColor else MutedColor,
+                        modifier = Modifier.alpha(if (m.reached) 1f else 0.4f))
+                    Text(
+                        if (m.reached) "${m.days}天" else "差${m.days - log.total}天",
+                        fontSize = 10.sp,
+                        color = if (m.reached) DoneGreen else MutedColor,
+                    )
+                }
+            }
+        }
 
         Spacer(Modifier.height(20.dp))
 
@@ -575,7 +598,6 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         val firstOffset = ym.atDay(1).dayOfWeek.value - 1 // 0 = Monday
         val daysInMonth = ym.lengthOfMonth()
         val totalCells = ((firstOffset + daysInMonth + 6) / 7) * 7
-        val today = LocalDate.now()
         repeat(totalCells / 7) { row ->
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 repeat(7) { col ->
