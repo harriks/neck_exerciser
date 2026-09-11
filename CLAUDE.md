@@ -248,6 +248,9 @@ paused: 是否暂停
 - **Colors.kt**：`PhaseColors` 从 Model.kt 迁出，Model 保持纯 Kotlin 可单测
 - **MainActivity.kt**：`rememberSaveable` 保存所选模式；旋转屏幕不再重置锻炼
   （`LaunchedEffect(mode)` 仅在模式变化时 setMode；返回按钮负责 reset）
+- **计时设置**：计时页 ⋮ 菜单「计时设置」运行时编辑时长/组数（`TimingConfig.toJson()` 序列化 +
+  `TimingStore` 持久化，启动时优先于内嵌 JSON；保存热生效并重置进行中锻炼）
+- **屏幕常亮**：锻炼运行期间 `FLAG_KEEP_SCREEN_ON` 保持屏幕唤醒，结束/离开计时页自动清除
 - **打卡日历**：`CheckIn.kt` 纯 Kotlin 打卡日志（TreeSet 去重 + 紧凑 `v1:base36` 序列化）；
   持久化经 `CheckInStore.kt`（SharedPreferences `"spine_checkins"`，单一数据源，
   `AppNavigation` 写穿保存——冷启动/划掉任务后历史不丢）；完成锻炼进 `Phase.DONE` 时当天打卡
