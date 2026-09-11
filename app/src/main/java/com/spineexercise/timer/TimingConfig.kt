@@ -63,6 +63,32 @@ data class TimingConfig(
                 )
             }
     }
+
+    /**
+     * Serialize back to the shared JSON schema (runtime settings editor saves
+     * this; [fromJson] must round-trip it unchanged — see TimingConfigTest).
+     */
+    fun toJson(): String {
+        fun stage(st: ExerciseStage) = buildString {
+            append("{ \"name\": \"${st.name}\", \"dirs\": [")
+            append(st.dirs.joinToString(", ") { "\"$it\"" })
+            append("], \"contractSec\": ${st.contractSec}, \"relaxSec\": ${st.relaxSec}, \"groups\": ${st.groups} }")
+        }
+        val gentle = (stages[Mode.GENTLE] ?: emptyList()).joinToString(",\n      ") { stage(it) }
+        val iso = (stages[Mode.ISOMETRIC] ?: emptyList()).joinToString(",\n      ") { stage(it) }
+        return """
+{
+  "prepareSec": $prepareSec,
+  "modes": {
+    "gentle": [
+      $gentle
+    ],
+    "isometric": [
+      $iso
+    ]
+  }
+}""".trimIndent()
+    }
 }
 
 // ===================== Tiny JSON model =====================

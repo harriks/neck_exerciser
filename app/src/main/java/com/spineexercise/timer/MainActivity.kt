@@ -66,6 +66,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Apply the user's saved timing override (⋮ → 计时设置) before anything
+        // reads Config (engine state is built lazily after setContent).
+        TimingStore.load(this).takeIf { it.isNotBlank() }?.let { json ->
+            runCatching { Config.configure(json) } // corrupt storage → keep defaults
+        }
         setContent { AppTheme { AppNavigation() } }
     }
 }
@@ -242,6 +247,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
     var showCalendar by remember { mutableStateOf(false) }
     var showTips by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
     if (showCalendar) {
         // Calendar shown in-place so the ViewModel survives (no progress lost).
         CalendarScreen(raw = checkinsRaw, onBack = { showCalendar = false })
@@ -285,11 +291,13 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
             HeaderMenuButton(
                 onOpenCalendar = { showCalendar = true },
                 onOpenTips = { showTips = true },
+                onOpenSettings = { showSettings = true },
                 onOpenAbout = { showAbout = true },
             )
         }
         TipsDialog(mode, showTips) { showTips = false }
         AboutDialog(showAbout) { showAbout = false }
+        SettingsDialog(showSettings, onDismiss = { showSettings = false }, onApply = { vm.resetWorkout() })
 
         Spacer(Modifier.height(8.dp))
 
@@ -517,7 +525,8 @@ fun StageProgress(state: TimerState) {
 
 /** Overflow menu anchored at the header's top-right corner (custom card + pop-in). */
 @Composable
-fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit, onOpenAbout: () -> Unit) {
+fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit,
+                     onOpenSettings: () -> Unit, onOpenAbout: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     // Micro-interaction: the kebab rotates into a dash while the menu is open
     val rotation by animateFloatAsState(
@@ -563,6 +572,7 @@ fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit, onOpenA
                             Column(Modifier.width(200.dp).padding(vertical = 6.dp)) {
                                 MenuRow("📅", "打卡日历", DoneGreen, onClick = { expanded = false; onOpenCalendar() })
                                 MenuRow("📋", "锻炼要点", TipHeaderColor, onClick = { expanded = false; onOpenTips() })
+                                MenuRow("⚙️", "计时设置", AccentBlue, onClick = { expanded = false; onOpenSettings() })
                                 Divider(color = Color.White.copy(alpha = 0.14f),
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
                                 MenuRow("ℹ️", "关于", AccentCyan, trailing = rememberAppVersionLabel(),
@@ -637,6 +647,115 @@ fun TipsDialog(mode: Mode, visible: Boolean, onDismiss: () -> Unit) {
         containerColor = Color(0xFF2D3E50),
         shape = TipShape,
     )
+}
+
+/** Runtime timing editor: steppers over the shared JSON config, saved via TimingStore. */
+@Composable
+fun SettingsDialog(visible: Boolean, onDismiss: () -> Unit, onApply: () -> Unit) {
+    if (!visible) return
+    val context = LocalContext.current
+
+    // Snapshot of editable values: index 0 = gentle, 1..3 = isometric stages.
+    // names/dirs stay fixed (they are the workout script, not tunable timing).
+    data class StageEdit(val name: String, val contract: Int, val relax: Int, val groups: Int)
+    var prepare by remember { mutableStateOf(Config.prepareSec) }
+    var stages by remember {
+        mutableStateOf(
+            (Config.stagesOf(Mode.GENTLE) + Config.stagesOf(Mode.ISOMETRIC))
+                .map { StageEdit(it.name, it.contractSec, it.relaxSec, it.groups) }
+        )
+    }
+    fun edit(i: Int, transform: (StageEdit) -> StageEdit) {
+        stages = stages.mapIndexed { j, s -> if (j == i) transform(s) else s }
+    }
+
+    fun save() {
+        val gentle = Config.stagesOf(Mode.GENTLE).zip(stages.take(1)) { st, e ->
+            st.copy(contractSec = e.contract, relaxSec = e.relax, groups = e.groups)
+        }
+        val iso = Config.stagesOf(Mode.ISOMETRIC).zip(stages.drop(1)) { st, e ->
+            st.copy(contractSec = e.contract, relaxSec = e.relax, groups = e.groups)
+        }
+        val json = TimingConfig(
+            prepareSec = prepare,
+            stages = mapOf(Mode.GENTLE to gentle, Mode.ISOMETRIC to iso),
+        ).toJson()
+        Config.configure(json)
+        TimingStore.save(context, json)
+        onApply() // reset any running workout so the new timing applies cleanly
+        onDismiss()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = { save() }) { Text("保存", color = AccentCyan, fontWeight = FontWeight.SemiBold) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消", color = HintColor) }
+        },
+        title = { Text("⚙️ 计时设置", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        text = {
+            Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
+                StepperRow("准备倒计时（秒）", prepare, 1..10) { prepare = it }
+                SectionHeader("舒缓锻炼 · ${stages[0].name}")
+                StepperRow("发力（秒）", stages[0].contract, 3..60) { edit(0) { s -> s.copy(contract = it) } }
+                StepperRow("放松（秒）", stages[0].relax, 0..60) { edit(0) { s -> s.copy(relax = it) } }
+                StepperRow("组数（每方向）", stages[0].groups, 1..20) { edit(0) { s -> s.copy(groups = it) } }
+                (1..3).forEach { i ->
+                    SectionHeader("等长抗阻 · ${stages[i].name}")
+                    StepperRow("发力（秒）", stages[i].contract, 3..60) { edit(i) { s -> s.copy(contract = it) } }
+                    StepperRow("放松（秒）", stages[i].relax, 0..60) { edit(i) { s -> s.copy(relax = it) } }
+                    StepperRow("组数（每方向）", stages[i].groups, 1..20) { edit(i) { s -> s.copy(groups = it) } }
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("保存后对新开始的锻炼生效；进行中的锻炼会被重置。", fontSize = 11.sp, color = MutedColor)
+                TextButton(onClick = {
+                    Config.configure(DEFAULT_TIMING_JSON)
+                    TimingStore.clear(context)
+                    onApply()
+                    onDismiss()
+                }) { Text("恢复默认", color = HintColor, fontSize = 13.sp) }
+            }
+        },
+        containerColor = Color(0xFF2D3E50),
+        shape = TipShape,
+    )
+}
+
+@Composable
+private fun SectionHeader(t: String) {
+    Text(t, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = AccentBlue,
+        modifier = Modifier.padding(top = 10.dp, bottom = 2.dp))
+}
+
+/** Label on the left, [−] value [+] stepper on the right, clamped to [range]. */
+@Composable
+private fun StepperRow(label: String, value: Int, range: IntRange, onChange: (Int) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+        Text(label, fontSize = 13.sp, color = SubTextColor, modifier = Modifier.weight(1f))
+        StepButton("−", enabled = value > range.first) { onChange(value - 1) }
+        Text("$value", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = ContentColor,
+            textAlign = TextAlign.Center, modifier = Modifier.widthIn(min = 36.dp))
+        StepButton("+", enabled = value < range.last) { onChange(value + 1) }
+    }
+}
+
+@Composable
+private fun StepButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(30.dp)
+            .background(
+                if (enabled) AccentCyan.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                RoundedCornerShape(8.dp),
+            )
+            .clickable(enabled = enabled, onClick = onClick),
+    ) {
+        Text(glyph, fontSize = 16.sp, color = if (enabled) AccentCyan else MutedColor)
+    }
 }
 
 /** About dialog with the app version from PackageManager. */

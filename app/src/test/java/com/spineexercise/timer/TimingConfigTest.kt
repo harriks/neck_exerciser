@@ -79,4 +79,27 @@ class TimingConfigTest {
         try { TimingConfig.fromJson("{ not json") } catch (e: Exception) { threw = true }
         assertTrue(threw)
     }
+
+    @Test
+    fun `toJson round-trips through fromJson unchanged`() {
+        // The runtime settings editor saves toJson(); fromJson must restore it.
+        val c = TimingConfig.default()
+        assertEquals(c, TimingConfig.fromJson(c.toJson()))
+    }
+
+    @Test
+    fun `toJson round-trips an edited config`() {
+        val edited = TimingConfig(
+            prepareSec = 7,
+            stages = mapOf(
+                Mode.GENTLE to listOf(
+                    ExerciseStage("温和发力", listOf("左手", "右手"), contractSec = 12, relaxSec = 9, groups = 6)),
+                Mode.ISOMETRIC to listOf(
+                    ExerciseStage("正向抗阻", listOf("右手", "左手"), contractSec = 20, relaxSec = 10, groups = 2),
+                    ExerciseStage("侧向抗阻", listOf("右手", "左手"), contractSec = 20, relaxSec = 10, groups = 2),
+                    ExerciseStage("弹力带训练", listOf("弹力带"), contractSec = 25, relaxSec = 45, groups = 5)),
+            ),
+        )
+        assertEquals(edited, TimingConfig.fromJson(edited.toJson()))
+    }
 }

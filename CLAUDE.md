@@ -50,6 +50,8 @@
 - **Android**：`app/src/main/java/com/spineexercise/timer/TimingConfig.kt` 顶部的
   `DEFAULT_TIMING_JSON` 字符串（启动时经手写解析器载入 `Config`）。
   `app/src/main/res/raw/timing_config.json` 与项目根 `timing_config.json` 为同构参考副本。
+  用户也可在计时页 ⋮ 菜单「计时设置」中运行时编辑：`toJson()` 序列化后经
+  `TimingStore`（SharedPreferences `"spine_timing"`）持久化，启动时优先于内嵌 JSON。
 - **Web**：`spine_exercise_timer.html` `<script>` 顶部的 `const TIMING_CONFIG = {...}`
   （file:// 双击打开无法 fetch 外部 JSON，故内嵌；`STAGES`/`PREPARE_SEC` 由它派生）。
 
