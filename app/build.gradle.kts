@@ -1,4 +1,3 @@
-import java.io.File
 import java.util.Properties
 
 plugins {
@@ -8,9 +7,6 @@ plugins {
 
 android {
     namespace = "com.spineexercise.timer"
-
-    // Build outside the non-ASCII project path: avoids file-lock/dex/cache issues
-    layout.buildDirectory.set(File(System.getenv("USERPROFILE") + "/SpineTimerBuild/app"))
     compileSdk = 34
 
     defaultConfig {

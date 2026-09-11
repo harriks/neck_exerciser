@@ -54,8 +54,8 @@ data class TimerState(
 
     val elapsedText: String get() {
         val m = elapsed / 60
-        val s = elapsed % 60
-        return "${m}:${String.format("%02d", s)}"
+        val s = (elapsed % 60).toString().padStart(2, '0')
+        return "$m:$s"
     }
 }
 
@@ -105,6 +105,14 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
     private var _state: TimerState = buildState(Mode.GENTLE)
     val state: TimerState get() = _state
 
+    /**
+     * Absolute end timestamp of the current phase, valid only while actively
+     * running (not paused/done). Hosts can use it to sleep until just past the
+     * boundary instead of busy-polling every frame.
+     */
+    val phaseEndBoundaryMs: Long
+        get() = if (_state.running && !_state.paused) phaseEndMs else Long.MAX_VALUE
+
     private val pendingEvents = mutableListOf<EngineEvent>()
 
     // Timing anchors
@@ -134,24 +142,32 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.START)
     }
 
-    fun togglePause() {
+    /** Sync pause state without announcements (UI speaks the action itself). */
+    fun setPaused(paused: Boolean) {
         val s = _state
-        if (!s.running) return
-        if (s.paused) {
-            segmentStartMs = nowMs()
-            _state = s.copy(paused = false)
-        } else {
+        if (!s.running || s.paused == paused) return
+        if (paused) {
             accumulatedMs += nowMs() - segmentStartMs
             _state = s.copy(paused = true)
-            pendingEvents += EngineEvent.Speak("已暂停")
+        } else {
+            segmentStartMs = nowMs()
+            _state = s.copy(paused = false)
         }
     }
 
-    fun reset() {
+    fun togglePause() {
+        val s = _state
+        if (!s.running) return
+        setPaused(!s.paused)
+        pendingEvents += EngineEvent.Speak(if (_state.paused) "已暂停" else "继续锻炼")
+    }
+
+    fun reset(announce: Boolean = false) {
         _state = buildState(_state.mode)
         phaseEndMs = 0L
         accumulatedMs = 0L
         segmentStartMs = 0L
+        if (announce) pendingEvents += EngineEvent.Speak("重置")
     }
 
     /** Advance the machine to the current instant. Safe to call at any rate. */
@@ -184,6 +200,7 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
     }
 
     fun drainEvents(): List<EngineEvent> {
+        if (pendingEvents.isEmpty()) return emptyList()
         val out = pendingEvents.toList()
         pendingEvents.clear()
         return out
@@ -240,8 +257,11 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
             if (newSi != s.si) {
                 pendingEvents += EngineEvent.Speak("${stageTalk(st)}开始")
             } else if (st.dirs.size > 1) {
-                // Within-stage hand cue; single-direction stages (弹力带) only announce on entry
+                // 多方向阶段内换手提示
                 pendingEvents += EngineEvent.Speak("请换${st.dirs[newDi]}发力")
+            } else {
+                // 单方向阶段（弹力带）：放松结束后提示继续
+                pendingEvents += EngineEvent.Speak("继续训练")
             }
         } else {
             if (newRep >= s.groupCount) { finish(elapsedSec, newRep); return }

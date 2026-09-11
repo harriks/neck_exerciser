@@ -1,4 +1,4 @@
-﻿# 颈椎锻炼计时器 - 技术规格
+# 颈椎锻炼计时器 - 技术规格
 
 ## 1. 项目概览
 
@@ -16,6 +16,8 @@
 颈椎锻炼器/
 ├── CLAUDE.md                    # 本文件
 ├── spine_exercise_timer.html    # Web 版（单文件，HTML+CSS+JS）
+├── timing_config.json           # 共享时长配置（参考副本，与代码内嵌 JSON 同构）
+
 └── android/SpineExerciseTimer/  # Android 版
     ├── settings.gradle.kts
     ├── build.gradle.kts
@@ -28,16 +30,37 @@
         │   ├── values/colors.xml
         │   ├── values/ic_launcher_background.xml
         │   ├── drawable/ic_launcher_foreground.xml
-        │   └── mipmap-anydpi-v26/ic_launcher.xml, ic_launcher_round.xml
+        │   ├── mipmap-anydpi-v26/ic_launcher.xml, ic_launcher_round.xml
+        │   └── raw/timing_config.json      # 时长配置（打包资源，参考副本）
         └── java/com/spineexercise/timer/
-            ├── Model.kt           # 数据模型 + 配置
-            ├── TimerViewModel.kt  # 核心逻辑 + 音效/TTS
+            ├── Model.kt           # 数据模型 + Config
+            ├── TimingConfig.kt    # JSON 时长配置 + 手写解析器（纯 Kotlin）
+            ├── WorkoutEngine.kt   # 纯 Kotlin 状态机（锚点计时）
+            ├── TimerViewModel.kt  # 桥接：tick 驱动引擎 + 音效/TTS
+            ├── CheckIn.kt         # 打卡记录（纯 Kotlin，紧凑序列化 v1:base36 epochDay）
+            ├── Colors.kt          # 阶段颜色
+## 3. 时长配置（JSON）
+
+所有倒计时时间（准备/发力/放松/组数）集中在一处 JSON 配置，**改时长只需改 JSON，无需动逻辑代码**：
+
+- **Android**：`app/src/main/java/com/spineexercise/timer/TimingConfig.kt` 顶部的
+  `DEFAULT_TIMING_JSON` 字符串（启动时经手写解析器载入 `Config`）。
+  `app/src/main/res/raw/timing_config.json` 与项目根 `timing_config.json` 为同构参考副本。
+- **Web**：`spine_exercise_timer.html` `<script>` 顶部的 `const TIMING_CONFIG = {...}`
+  （file:// 双击打开无法 fetch 外部 JSON，故内嵌；`STAGES`/`PREPARE_SEC` 由它派生）。
+
+JSON 结构（三处保持一致，见项目根 `CLAUDE.md` 第 3 节）：
+`prepareSec`（准备倒计时）、`modes.{gentle,isometric}[]` 的
+`name`（播报名）、`dirs[]`（方向）、`contractSec`（发力）、`relaxSec`（放松）、`groups`（每方向组数）。
+修改后需重新构建 APK（Android）或刷新浏览器（Web）。
+
+
             └── MainActivity.kt    # Compose UI
 ```
 
-## 3. 功能规格
+## 4. 功能规格
 
-### 3.1 锻炼模式
+### 4.1 锻炼模式
 
 进入 App 后先选择模式，选好后进入纯计时界面。
 
@@ -64,7 +87,7 @@
 **交替模式**：右手→左手→右手→左手→右手→左手（每只手各 3 次，共 6 次算 3 组）
 **阶段4 已移除**（原肩膀放松）
 
-### 3.2 状态机
+### 4.2 状态机
 
 ```
 idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> contract ──> ... ──> done
@@ -81,7 +104,7 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 | `relax` | 放松中 | 蓝色 `#4fc3f7` | 呼吸透明度 |
 | `done` | 锻炼完成 | 绿色 `#9ccc65` | 无 |
 
-### 3.3 计时规则
+### 4.3 计时规则
 
 - 仅首轮包含 prepare 阶段（3 秒倒计时）
 - relax 结束后 repCount++，判断是否完成
@@ -89,18 +112,24 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 - 每秒 tick，倒计时归零时切换阶段
 - 总用时从点"开始"计时，暂停时暂停，重置归零
 
-### 3.4 语音提示
+### 4.4 语音提示
 
 | 事件 | 语音内容 | 触发时机 |
 |------|---------|---------|
-| 点击开始 | "开始，准备" | startWorkout |
-| 首次进入发力 | "用右手/用左手" | 首个 contract |
-| 后续切换发力 | "换右手/换左手" | contract 切换 |
+| 点击开始 | "开始，准备"（等长抗阻："X训练开始"） | startWorkout |
+| 首次进入发力 | "请换右手发力/请换左手发力" | 首个 contract |
+| 后续切换发力 | "请换右手发力/请换左手发力" | contract 切换 |
 | 进入放松 | "放松" | relax 开始 |
 | 暂停 | "已暂停" | togglePause |
-| 完成 | "完成，做得好" | finishWorkout |
+| 完成 | "完成，做得好"（等长抗阻："恭喜，全部完成，做得好"） | finishWorkout |
 
-### 3.5 音效
+**等长抗阻阶段切换播报**（合并为一条语音，因 TTS 会清空队列）：
+- 进入第 2 阶段首个发力：`侧向抗阻训练开始`
+- 进入第 3 阶段（弹力带）：`弹力带训练开始`
+- 弹力带阶段内后续组播报「继续训练」，并保留切换提示音
+- 阶段名已含“训练”时不再重复拼接（“弹力带训练”→“弹力带训练开始”）
+
+### 4.5 音效
 
 | 事件 | 频率 | 时长 |
 |------|------|------|
@@ -111,7 +140,7 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 
 最后 3 秒滴声在 contract 和 relax 阶段都会触发。
 
-### 3.6 按钮逻辑
+### 4.6 按钮逻辑
 
 只保留 2 个按钮：
 
@@ -122,7 +151,7 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 | 已暂停 | 继续 | 重置 |
 | 已完成 | 重新开始 | 重置 |
 
-### 3.7 界面布局
+### 4.7 界面布局
 
 #### 模式选择页
 - 🦴 图标 + 标题「颈椎锻炼」
@@ -137,6 +166,7 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 
 #### 信息显示位置
 - **圆环内上方 phaseLabel**：`左手发力中` / `放松中`
+- **倒计时数字**：) contract/relax 时剩余 >3 秒为绿色、最后 3 秒为红色，0.6s 平滑过渡)
 - **圆环内大字**：倒计时秒数
 - **阶段进度 stageName**：`📍 正向抗阻 (1/15)` 全局组数进度
 - **进度条**：彩色方块，已完成绿色、当前橙色、未完成暗色
@@ -147,25 +177,25 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 - 点击弹出 AlertDialog / Modal
 - 内容为当前模式的锻炼要点列表
 
-### 3.8 调试模式
+### 4.8 调试模式
 
 Web 版底部有 Debug 加速开关（⚡ 10x），勾选后 tick 从 1000ms 变为 100ms，加速 10 倍。
 Android 版无此功能（可用 Android Studio 模拟器加速）。
 
-## 4. 技术实现
+## 5. 技术实现
 
-### 4.1 Web 版
+### 5.1 Web 版
 
 - 单文件 `spine_exercise_timer.html`
 - 原生 HTML + CSS + JavaScript，无框架
-- 数据驱动：`STAGES` 配置定义所有模式参数
+- 数据驱动：`TIMING_CONFIG` JSON 常量定义所有时长参数，`STAGES`/`PREPARE_SEC` 由它派生
 - 圆环用 SVG `stroke-dashoffset` 实现
 - 音效用 Web Audio API（OscillatorNode）
 - 语音用 SpeechSynthesis API
 - 进度条用 DOM 动态创建，`stageBarDirty` 标记减少重建
 - 颜色/形状等常量提取为顶层变量，避免重复创建
 
-### 4.2 Android 版
+### 5.2 Android 版
 
 - Jetpack Compose 声明式 UI
 - Kotlin + AndroidViewModel + StateFlow
@@ -176,7 +206,7 @@ Android 版无此功能（可用 Android Studio 模拟器加速）。
 - TimerState 预计算显示字段（stageName/handName/contractSec 等），避免每次读取遍历 Config
 - `buildState()` 工厂函数统一构建状态
 
-### 4.3 状态管理
+### 5.3 状态管理
 
 状态机核心变量：
 
@@ -198,7 +228,7 @@ paused: 是否暂停
 - 单方向模式：gi++ 直到 groups 后切阶段
 - singleSide 标记：做完一个方向的全部组才切方向（已移除）
 
-## 5. 架构（2026-09 重构后）
+## 6. 架构（2026-09 重构后）
 
 - **WorkoutEngine.kt**：纯 Kotlin 状态机（无 Android 依赖）
   - 锚点计时：每个阶段记录绝对结束时间戳，倒计时/总用时零漂移
@@ -206,25 +236,37 @@ paused: 是否暂停
   - `TimerState` + `buildState()` 工厂也在此文件；`completedGroups` 已预计算
 - **TimerViewModel.kt**：只负责桥接 —— 200ms tick 驱动 engine，将事件转为
   ToneGenerator/TTS 调用；时钟用 `SystemClock.elapsedRealtime()`（单调时钟）
-- **Model.kt**：`Config.stagesOf()/stageOf()` 取代了 `!!` 访问
+- **Model.kt**：`Config` 的时长来源改为 `TimingConfig`（JSON 配置），
+  `Config.prepareSec/configure(json)` 暴露给引擎与 UI；`stagesOf()/stageOf()` 取代了 `!!` 访问
+- **TimingConfig.kt**：JSON 时长配置 + 手写迷你解析器（纯 Kotlin、零依赖、可单测）
 - **Colors.kt**：`PhaseColors` 从 Model.kt 迁出，Model 保持纯 Kotlin 可单测
 - **MainActivity.kt**：`rememberSaveable` 保存所选模式；旋转屏幕不再重置锻炼
   （`LaunchedEffect(mode)` 仅在模式变化时 setMode；返回按钮负责 reset）
-- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt`（14 个用例，JUnit4）
+- **打卡日历**：`CheckIn.kt` 存打卡天数（TreeSet 去重 + 紧凑 `v1:base36` 序列化，
+  单条字符串经 `rememberSaveable` 持久化）；完成锻炼进 `Phase.DONE` 时当天打卡，
+  首页/计时页「📅」进入 `CalendarScreen`（月历视图，`CalendarScreen`/`DayCell`）
+- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `CheckInLogTest.kt`（JUnit4）
 
-## 6. 已知限制
+## 7. 已知限制
 
 - Web 版依赖浏览器 Web Audio API，部分浏览器首次需要用户交互才能播放
-- Android 版项目路径不能包含中文字符（已通过 `android.overridePathCheck=true` 绕过）
 - Android 版 Gradle 构建需要网络下载依赖
 - 图标为矢量绘制的颈椎图形，非专业设计
 
-## 7. 运行单元测试
+## 8. 构建与测试
 
-Gradle 测试 worker 在非 ASCII（中文）项目路径下无法加载测试类（编译不受影响）。
-使用仓库根目录的 `run-tests.ps1`，它会将源码同步到 %TEMP% 下的 ASCII 路径运行：
+项目路径现为全 ASCII（`F:\deepseek_harness\neck_exerciser\android\SpineExerciseTimer`），
+Gradle 可直接在当前目录运行。此前「同步到 %TEMP% + 重定向构建目录」的绕法已移除，
+`app/build.gradle.kts` 不再重定向构建目录，产物在项目内 `app/build/`。
 
+三个等价用法（在 `android/SpineExerciseTimer/` 目录内执行）：
+
+```powershell
+.\run-tests.ps1                    # 单元测试（JUnit4），产物在 app\build\test-results
+.\build-release.ps1                # 签名 release APK
+gradle.bat ':app:assembleRelease'  # 或直接用 Gradle 打 release
 ```
-powershell -File run-tests.ps1        # 运行后清理临时目录
-powershell -File run-tests.ps1 -Keep # 保留临时目录便于调试
-```
+
+签名配置读取 `local.properties`（SPINE_STORE_FILE/PWD、SPINE_KEY_ALIAS/PWD）。
+`build-release.ps1` 会把 `app\build\outputs\apk\release\app-release.apk`
+复制为项目目录下的 `app-release.apk`（ASCII 文件名，避免脚本编码问题）。

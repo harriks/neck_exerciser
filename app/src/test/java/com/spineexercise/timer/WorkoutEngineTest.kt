@@ -1,4 +1,4 @@
-﻿package com.spineexercise.timer
+package com.spineexercise.timer
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -164,7 +164,7 @@ class WorkoutEngineTest {
     }
 
     @Test
-    fun `band stage only announces on first entry`() {
+    fun `band stage announces continue after each relax`() {
         engine.setMode(Mode.ISOMETRIC)
         engine.start()
         advanceSeconds(3 + 6 * 30 + 6 * 30) // reach band stage, first contract
@@ -172,8 +172,8 @@ class WorkoutEngineTest {
         assertTrue("entry speaks=$entry", entry.contains("弹力带训练开始"))
         advanceSeconds(15 + 30) // band group 1 done -> group 2 contract
         val events = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
-        // No per-group announcement inside the single-direction band stage
-        assertTrue("group2 speaks=$events", events.none { it.contains("弹力带") })
+        // After the band relax, invite the user to continue the next set
+        assertTrue("group2 speaks=$events", events.contains("继续训练") )
         assertTrue("group2 speaks=$events", events.none { it.contains("请换") })
     }
 

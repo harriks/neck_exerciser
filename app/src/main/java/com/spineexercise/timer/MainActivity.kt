@@ -1,13 +1,12 @@
 package com.spineexercise.timer
 
 import android.os.Bundle
-import android.speech.tts.TextToSpeech
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -19,21 +18,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import java.util.Locale
+import java.time.LocalDate
+import java.time.YearMonth
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -55,6 +55,8 @@ private val AccentCyan = Color(0xFF4FC3F7)
 private val AccentBtn = Color(0xFF29B6F6)
 private val AccentOrange = Color(0xFFFF7043)
 private val DoneGreen = Color(0xFF66BB6A)
+private val CountdownNormal = Color(0xFF66BB6A) // 倒计时数字：剩余 >3 秒，绿色
+private val CountdownWarn = Color(0xFFFF5252)    // 倒计时数字：剩余最后 3 秒，红色
 private val TipHeaderColor = Color(0xFFFFAB91)
 private val SegDimColor = Color.White.copy(alpha = 0.1f)
 private val ContentColor = Color(0xFFE8EEF2)
@@ -79,30 +81,10 @@ fun AppTheme(content: @Composable () -> Unit) {
 
 // ===================== TTS Voice =====================
 
-// Chinese voice announcements for button taps (start / pause / resume / reset).
-// Returns a speak() lambda; no-op until the engine finishes initializing.
-@Composable
-fun rememberTtsSpeaker(): (String) -> Unit {
-    val context = LocalContext.current
-    var tts by remember { mutableStateOf<TextToSpeech?>(null) }
-    var ready by remember { mutableStateOf(false) }
-
-    DisposableEffect(context) {
-        val engine = TextToSpeech(context) { status -> ready = status == TextToSpeech.SUCCESS }
-        tts = engine
-        onDispose { engine.shutdown() }
-    }
-
-    return remember(ready) {
-        { text: String ->
-            val engine = tts
-            if (engine != null && ready) {
-                engine.language = Locale.SIMPLIFIED_CHINESE
-                engine.speak(text, TextToSpeech.QUEUE_FLUSH, null, "btn_$text")
-            }
-        }
-    }
-}
+// (Removed) UI-level TTS: all announcements (engine events + button taps) now go
+// through the single TextToSpeech instance owned by TimerViewModel, so voices no
+// longer overlap (previously tapping start spoke "开始" while the engine spoke
+// "开始，准备") and one fewer TTS engine is created per screen.
 
 // ===================== Navigation =====================
 
@@ -110,14 +92,31 @@ fun rememberTtsSpeaker(): (String) -> Unit {
 fun AppNavigation() {
     // rememberSaveable: survives rotation / process recreation
     var selectedMode by rememberSaveable { mutableStateOf<Mode?>(null) }
-    if (selectedMode == null) ModeSelectScreen { selectedMode = it }
-    else TimerScreen(mode = selectedMode!!, onBack = { selectedMode = null })
+    // Single compact string holds the whole check-in history (see CheckIn.kt).
+    var checkinsRaw by rememberSaveable { mutableStateOf("") }
+    var showCalendar by remember { mutableStateOf(false) }
+
+    if (showCalendar) {
+        CalendarScreen(
+            raw = checkinsRaw,
+            onBack = { showCalendar = false },
+        )
+    } else if (selectedMode == null) {
+        ModeSelectScreen(onSelect = { selectedMode = it }, onOpenCalendar = { showCalendar = true })
+    } else {
+        TimerScreen(
+            mode = selectedMode!!,
+            onBack = { selectedMode = null },
+            checkinsRaw = checkinsRaw,
+            onCheckIn = { raw -> checkinsRaw = raw },
+        )
+    }
 }
 
 // ===================== Mode Select Screen =====================
 
 @Composable
-fun ModeSelectScreen(onSelect: (Mode) -> Unit) {
+fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().background(BgBrush).padding(horizontal = 32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -137,6 +136,10 @@ fun ModeSelectScreen(onSelect: (Mode) -> Unit) {
         Spacer(Modifier.height(16.dp))
         ModeCard("🔒", "等长抗阻", "正向抗阻 → 侧向抗阻 → 弹力带训练",
             "3个阶段，共15组，静态持续发力", AccentOrange) { onSelect(Mode.ISOMETRIC) }
+
+        Spacer(Modifier.height(16.dp))
+        ModeCard("📅", "打卡日历", "查看本月训练打卡情况",
+            "每次完成锻炼自动帮你记下当天", DoneGreen) { onOpenCalendar() }
 
         Spacer(Modifier.weight(0.3f))
     }
@@ -164,9 +167,16 @@ fun ModeCard(emoji: String, title: String, desc: String, tips: String, color: Co
 // ===================== Timer Screen =====================
 
 @Composable
-fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()) {
+fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
+                onCheckIn: (String) -> Unit, vm: TimerViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
-    val speak = rememberTtsSpeaker()
+
+    var showCalendar by remember { mutableStateOf(false) }
+    if (showCalendar) {
+        // Calendar shown in-place so the ViewModel survives (no progress lost).
+        CalendarScreen(raw = checkinsRaw, onBack = { showCalendar = false })
+        return
+    }
 
     // System gesture/button back exits the workout (resets it first)
     BackHandler { vm.resetWorkout(); onBack() }
@@ -174,6 +184,18 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
     // Only switch mode when it actually changed; the ViewModel survives rotation,
     // so a running workout is not reset by configuration changes.
     LaunchedEffect(mode) { if (vm.state.value.mode != mode) vm.setMode(mode) }
+
+    // Auto check-in: exactly once per completed workout (dedup by day is
+    // handled inside CheckInLog, so the same day never double counts).
+    var recordedToday by remember { mutableStateOf(false) }
+    LaunchedEffect(state.phase) {
+        if (state.phase == Phase.DONE && !recordedToday) {
+            recordedToday = true
+            val log = CheckInLog.parse(checkinsRaw)
+            log.add(LocalDate.now())
+            onCheckIn(log.serialize())
+        }
+    }
 
     Box(Modifier.fillMaxSize()) {
     Column(
@@ -187,6 +209,8 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
         // Header
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Spacer(Modifier.weight(1f))
+            CalendarShortcutButton { showCalendar = true }
+            Spacer(Modifier.width(8.dp))
             TipsButton(mode)
         }
 
@@ -227,7 +251,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
             }
             Button(
                 onClick = {
-                    speak(btnText)
+                    vm.speak(btnText)
                     if (!state.running) vm.startWorkout()
                     else vm.togglePause()
                 },
@@ -239,7 +263,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
             }
             OutlinedButton(
                 onClick = {
-                    speak("重置")
+                    vm.speak("重置")
                     vm.resetWorkout()
                 },
                 modifier = Modifier.weight(1f).height(52.dp),
@@ -264,6 +288,17 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, vm: TimerViewModel = viewModel()
 fun TimerRing(state: TimerState) {
     val ringColor = PhaseColors.forPhase(state.phase)
 
+    // 倒计时数字颜色随剩余秒数平滑过渡：prepare 固定黄色；contract/relax 时
+    // 剩余 >3 秒为绿、最后 3 秒为红（0.6s 缓冲）；idle/done 保持阶段色。
+    val countdownColor by animateColorAsState(
+        targetValue = when (state.phase) {
+            Phase.PREPARE -> PhaseColors.prepare
+            Phase.CONTRACT, Phase.RELAX -> if (state.countdown in 1..3) CountdownWarn else CountdownNormal
+            else -> ringColor
+        },
+        animationSpec = tween(600),
+    )
+
     val progress = when (state.phase) {
         Phase.DONE -> 1f
         Phase.IDLE -> 0f
@@ -278,15 +313,32 @@ fun TimerRing(state: TimerState) {
         }
     }
 
-    // Infinite transitions must be at fixed call site
-    val infinite = rememberInfiniteTransition(label = "ring")
-    val pulseVal by infinite.animateFloat(1f, 1.03f,
-        infiniteRepeatable(tween(2000, easing = EaseInOut), RepeatMode.Reverse), label = "p")
-    val breatheVal by infinite.animateFloat(0.7f, 1f,
-        infiniteRepeatable(tween(4000, easing = EaseInOut), RepeatMode.Reverse), label = "b")
+    // Pulse (contract) / breathe (relax) animations are gated: they only run in
+    // their phase and are applied in the draw phase via graphicsLayer + lambda
+    // readers, so idle/done states cause zero recomposition or invalidation.
+    val pulse = remember { Animatable(1f) }
+    val breathe = remember { Animatable(1f) }
+    LaunchedEffect(state.phase) {
+        when (state.phase) {
+            Phase.CONTRACT -> {
+                pulse.snapTo(1f)
+                pulse.animateTo(1.03f, infiniteRepeatable(tween(2000, easing = EaseInOut), RepeatMode.Reverse))
+            }
+            Phase.RELAX -> {
+                breathe.snapTo(0.7f)
+                breathe.animateTo(1f, infiniteRepeatable(tween(4000, easing = EaseInOut), RepeatMode.Reverse))
+            }
+            else -> {
+                pulse.snapTo(1f)
+                breathe.snapTo(1f)
+            }
+        }
+    }
 
-    val pulseScale = if (state.phase == Phase.CONTRACT) pulseVal else 1f
-    val breatheAlpha = if (state.phase == Phase.RELAX) breatheVal else 1f
+    // Smooth the ring sweep like the web version's CSS transition, but animate
+    // in the draw phase: no recomposition while the arc moves.
+    val animatedProgress = remember { Animatable(0f) }
+    LaunchedEffect(progress) { animatedProgress.animateTo(progress, tween(220)) }
 
     // Pre-compute static arc params
     val strokeW = 8.dp
@@ -294,20 +346,24 @@ fun TimerRing(state: TimerState) {
 
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier.size(280.dp).scale(pulseScale).alpha(breatheAlpha),
+        modifier = Modifier.size(280.dp).graphicsLayer {
+            // Read animatables here (draw phase) — no recomposition per frame
+            scaleX = if (state.phase == Phase.CONTRACT) pulse.value else 1f
+            scaleY = if (state.phase == Phase.CONTRACT) pulse.value else 1f
+            alpha = if (state.phase == Phase.RELAX) breathe.value else 1f
+        },
     ) {
-        // Canvas only recomposes when progress or ringColor changes
-        val curProgress = progress
-        val curColor = ringColor
-        Canvas(Modifier.size(280.dp)) {
-            val sw = strokeW.toPx()
-            val pad = sw / 2
-            val arcSize = Size(size.width - sw, size.height - sw)
-            val tl = Offset(pad, pad)
-            drawArc(bgRingColor, -90f, 360f, false, tl, arcSize, style = Stroke(sw))
-            drawArc(curColor, -90f, 360f * curProgress, false, tl, arcSize,
-                style = Stroke(sw, cap = StrokeCap.Round))
-        }
+        Spacer(
+            Modifier.size(280.dp).drawBehind {
+                val sw = strokeW.toPx()
+                val pad = sw / 2
+                val arcSize = Size(size.width - sw, size.height - sw)
+                val tl = Offset(pad, pad)
+                drawArc(bgRingColor, -90f, 360f, false, tl, arcSize, style = Stroke(sw))
+                drawArc(ringColor, -90f, 360f * animatedProgress.value, false, tl, arcSize,
+                    style = Stroke(sw, cap = StrokeCap.Round))
+            }
+        )
 
         Text(state.phaseLabel, fontSize = 13.sp, color = HintColor, letterSpacing = 1.sp,
             modifier = Modifier.align(Alignment.TopCenter).padding(top = 60.dp))
@@ -317,7 +373,7 @@ fun TimerRing(state: TimerState) {
             Phase.DONE -> "✓"
             else -> "${state.countdown}"
         }
-        Text(timeText, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, color = ringColor)
+        Text(timeText, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, color = countdownColor)
     }
 }
 
@@ -417,7 +473,7 @@ fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
         Card(
             shape = TipShape,
             colors = CardDefaults.cardColors(containerColor = Color(0xFF2D3E50)),
-            modifier = Modifier.padding(32.dp).scale(scale)
+            modifier = Modifier.padding(32.dp).graphicsLayer { this.scaleX = scale; this.scaleY = scale }
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 32.dp, vertical = 28.dp)) {
                 Text("🎉", fontSize = 56.sp)
@@ -425,6 +481,8 @@ fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
                 Text("锻炼完成！", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = AccentCyan, letterSpacing = 2.sp)
                 Spacer(Modifier.height(8.dp))
                 Text("做得很棒，请缓慢起身，避免突然动作", fontSize = 14.sp, color = HintColor, textAlign = TextAlign.Center)
+                Spacer(Modifier.height(4.dp))
+                Text("📅 今日打卡已记录", fontSize = 13.sp, color = DoneGreen, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(24.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     Button(onClick = onAgain, shape = BtnShape, colors = ButtonDefaults.buttonColors(containerColor = AccentBtn)) {
@@ -435,6 +493,121 @@ fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
                     }
                 }
             }
+        }
+    }
+}
+
+// ===================== Calendar (打卡日历) =====================
+
+@Composable
+fun CalendarShortcutButton(onOpen: () -> Unit) {
+    IconButton(onClick = onOpen, modifier = Modifier.size(32.dp)) {
+        Text("📅", fontSize = 16.sp, modifier = Modifier.alpha(0.6f))
+    }
+}
+
+@Composable
+fun CalendarScreen(raw: String, onBack: () -> Unit) {
+    val log = remember { CheckInLog.parse(raw) }
+    var ym by remember { mutableStateOf(YearMonth.now()) }
+    BackHandler { onBack() }
+
+    Box(Modifier.fillMaxSize()) {
+    Column(
+        modifier = Modifier.fillMaxSize().background(BgBrush)
+            .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Spacer(Modifier.height(36.dp))
+
+        // Title + back
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = onBack, shape = BtnShape,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor)) {
+                Text("← 返回", fontWeight = FontWeight.SemiBold)
+            }
+            Spacer(Modifier.weight(1f))
+            Text("📅 打卡日历", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("本月打卡 ${log.countInMonth(ym)} 天 · 累计 ${log.total} 天",
+            fontSize = 14.sp, color = HintColor)
+
+        Spacer(Modifier.height(20.dp))
+
+        // Month navigation
+        Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1))) {
+                Text("‹", fontSize = 22.sp, color = AccentCyan)
+            }
+            Spacer(Modifier.weight(1f))
+            Text("${ym.year} 年 ${ym.monthValue} 月", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = { ym = ym.plusMonths(1) }) {
+                Text("›", fontSize = 22.sp, color = AccentCyan)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+
+        // Weekday header (Monday first)
+        val weekDays = listOf("一", "二", "三", "四", "五", "六", "日")
+        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+            weekDays.forEach { w ->
+                Box(Modifier.weight(1f)) {
+                    Text(w, fontSize = 13.sp, color = HintColor, textAlign = TextAlign.Center)
+                }
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        // Day grid: leading blanks so the 1st lands on the right column
+        val firstOffset = ym.atDay(1).dayOfWeek.value - 1 // 0 = Monday
+        val daysInMonth = ym.lengthOfMonth()
+        val totalCells = ((firstOffset + daysInMonth + 6) / 7) * 7
+        val today = LocalDate.now()
+        repeat(totalCells / 7) { row ->
+            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                repeat(7) { col ->
+                    val idx = row * 7 + col
+                    val dayNumber = idx - firstOffset + 1
+                    val isDay = dayNumber in 1..daysInMonth
+                    val date = if (isDay) ym.atDay(dayNumber) else null
+                    val checked = date != null && log.hasInMonth(ym, dayNumber)
+                    val isToday = date == today
+                    Box(Modifier.weight(1f)) {
+                        DayCell(isDay = isDay, checked = checked, isToday = isToday, day = dayNumber)
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Text("完成一次锻炼后，当天自动记录打卡 ✦", fontSize = 12.sp, color = MutedColor)
+        Spacer(Modifier.height(24.dp))
+    }
+    }
+}
+
+@Composable
+fun DayCell(isDay: Boolean, checked: Boolean, isToday: Boolean, day: Int) {
+    val textColor = when {
+        !isDay -> MutedColor
+        isToday -> AccentCyan
+        else -> ContentColor
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(if (isDay) "${day}" else "",
+            fontSize = 15.sp, color = textColor,
+            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
+        Spacer(Modifier.height(2.dp))
+        if (checked) {
+            Box(Modifier.size(6.dp).background(DoneGreen, RoundedCornerShape(3.dp)))
+        } else if (isDay) {
+            Box(Modifier.size(6.dp).background(SegDimColor, RoundedCornerShape(3.dp)))
         }
     }
 }

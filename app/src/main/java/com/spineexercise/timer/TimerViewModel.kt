@@ -63,6 +63,8 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     fun togglePause() {
         engine.togglePause()
         syncAndPlay()
+        // The tick loop exits while paused; restart it on resume.
+        if (engine.state.running && !engine.state.paused) startTick()
     }
 
     fun resetWorkout() {
@@ -79,17 +81,31 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
 
     // ===================== Tick =====================
 
-    // Fast tick (200ms) + anchor-based computation = drift-free countdown
+    // Anchor-based computation = drift-free countdown. The loop is adaptive:
+    // it sleeps until just past the phase boundary, then ticks in short steps
+    // for the countdown seconds - and exits entirely when paused/finished, so
+    // no polling happens while idle or paused (saves battery).
     private fun startTick() {
         tickJob?.cancel()
         tickJob = viewModelScope.launch {
             while (isActive) {
-                delay(200)
                 engine.tick()
                 syncAndPlay()
+                val st = engine.state
+                if (st.paused || !st.running) break
+                val untilBoundary = engine.phaseEndBoundaryMs - SystemClock.elapsedRealtime()
+                val delayMs = when {
+                    untilBoundary <= 0L -> 50L                    // overdue: re-check quickly
+                    untilBoundary <= 300L -> untilBoundary + 40L  // land just past the boundary
+                    else -> 200L
+                }
+                delay(delayMs)
             }
         }
     }
+
+    /** Single TTS entry point for UI-originated announcements (button taps). */
+    fun speak(text: String) = speakInternal(text)
 
     private fun syncAndPlay() {
         _state.value = engine.state
@@ -121,7 +137,7 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    private fun speak(text: String) {
+    private fun speakInternal(text: String) {
         if (!ttsReady) return
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts_${System.currentTimeMillis()}")
     }
