@@ -534,10 +534,11 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
     Box(Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier.fillMaxSize().background(BgBrush)
+            .statusBarsPadding()
             .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(32.dp))
+        Spacer(Modifier.height(20.dp))
 
         // No visible back button: system gesture/button back exits (BackHandler above)
         Text("打卡日历", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AccentBlue,
