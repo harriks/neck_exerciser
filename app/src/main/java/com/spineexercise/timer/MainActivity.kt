@@ -19,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -92,8 +93,11 @@ fun AppTheme(content: @Composable () -> Unit) {
 fun AppNavigation() {
     // rememberSaveable: survives rotation / process recreation
     var selectedMode by rememberSaveable { mutableStateOf<Mode?>(null) }
-    // Single compact string holds the whole check-in history (see CheckIn.kt).
-    var checkinsRaw by rememberSaveable { mutableStateOf("") }
+    // SharedPreferences is the single source of truth for the check-in history
+    // (one compact string, see CheckIn.kt / CheckInStore): re-read at the
+    // composition root so relaunch, rotation and process death all restore it.
+    val context = LocalContext.current
+    var checkinsRaw by remember { mutableStateOf(CheckInStore.load(context)) }
     var showCalendar by remember { mutableStateOf(false) }
 
     if (showCalendar) {
@@ -108,7 +112,10 @@ fun AppNavigation() {
             mode = selectedMode!!,
             onBack = { selectedMode = null },
             checkinsRaw = checkinsRaw,
-            onCheckIn = { raw -> checkinsRaw = raw },
+            onCheckIn = { raw ->
+                checkinsRaw = raw
+                CheckInStore.save(context, raw) // write-through: survives relaunch
+            },
         )
     }
 }
