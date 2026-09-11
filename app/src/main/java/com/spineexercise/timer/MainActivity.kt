@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -68,6 +69,7 @@ private val CountdownWarn = Color(0xFFFF5252)    // 倒计时数字：剩余最�
 private val TipHeaderColor = Color(0xFFFFAB91)
 private val SegDimColor = Color.White.copy(alpha = 0.1f)
 private val ContentColor = Color(0xFFE8EEF2)
+private val OnDoneGreen = Color(0xFF14301E) // dark ink legible on the DoneGreen cell fill
 
 private val CardShape = RoundedCornerShape(16.dp)
 private val BtnShape = RoundedCornerShape(50.dp)
@@ -527,6 +529,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
     val log = remember(raw) { CheckInLog.parse(raw) }
     var ym by remember { mutableStateOf(YearMonth.now()) }
     BackHandler { onBack() }
+    val today = LocalDate.now()
 
     Box(Modifier.fillMaxSize()) {
     Column(
@@ -534,46 +537,31 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
             .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(36.dp))
+        Spacer(Modifier.height(32.dp))
 
-        // Title + back
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = onBack, shape = BtnShape,
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor)) {
-                Text("← 返回", fontWeight = FontWeight.SemiBold)
-            }
-            Spacer(Modifier.weight(1f))
-            Text("📅 打卡日历", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+        // No visible back button: system gesture/button back exits (BackHandler above)
+        Text("打卡日历", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AccentBlue,
+            modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
+
+        Spacer(Modifier.height(16.dp))
+
+        // ---- Stat strip: one glance = streak / best / month / total ----
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            StatTile("${log.currentStreak(today)}", "连续", AccentOrange, Modifier.weight(1f))
+            StatTile("${log.longestStreak()}", "最长", AccentCyan, Modifier.weight(1f))
+            StatTile("${log.countInMonth(ym)}", "本月", DoneGreen, Modifier.weight(1f))
+            StatTile("${log.total}", "累计", AccentBlue, Modifier.weight(1f))
         }
 
-        Spacer(Modifier.height(8.dp))
-        val today = LocalDate.now()
-        Text("🔥 连续 ${log.currentStreak(today)} 天 · 最长 ${log.longestStreak()} 天",
-            fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = AccentOrange)
-        Spacer(Modifier.height(4.dp))
-        Text("本月打卡 ${log.countInMonth(ym)} 天 · 累计 ${log.total} 天",
-            fontSize = 14.sp, color = HintColor)
+        Spacer(Modifier.height(10.dp))
 
-        Spacer(Modifier.height(12.dp))
-
-        // Milestone badges: reached = full color, else dimmed with days remaining
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically) {
-            log.milestones().forEach { m ->
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(m.emoji, fontSize = 22.sp,
-                        color = if (m.reached) ContentColor else MutedColor,
-                        modifier = Modifier.alpha(if (m.reached) 1f else 0.4f))
-                    Text(
-                        if (m.reached) "${m.days}天" else "差${m.days - log.total}天",
-                        fontSize = 10.sp,
-                        color = if (m.reached) DoneGreen else MutedColor,
-                    )
-                }
-            }
+        // Milestone pills: reached = green tint, else dimmed with days remaining
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            log.milestones().forEach { m -> MilestonePill(m, log.total, Modifier.weight(1f)) }
         }
 
-        Spacer(Modifier.height(20.dp))
+        Spacer(Modifier.height(18.dp))
 
         // Month navigation
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -589,7 +577,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
             }
         }
 
-        Spacer(Modifier.height(16.dp))
+        Spacer(Modifier.height(10.dp))
 
         // Weekday header (Monday first)
         val weekDays = listOf("一", "二", "三", "四", "五", "六", "日")
@@ -608,6 +596,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         val daysInMonth = ym.lengthOfMonth()
         val totalCells = ((firstOffset + daysInMonth + 6) / 7) * 7
         repeat(totalCells / 7) { row ->
+            if (row > 0) Spacer(Modifier.height(4.dp))
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 repeat(7) { col ->
                     val idx = row * 7 + col
@@ -623,14 +612,62 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
             }
         }
 
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(14.dp))
         Text("完成一次锻炼后，当天自动记录打卡 ✦", fontSize = 12.sp, color = MutedColor)
 
         Spacer(Modifier.height(20.dp))
-        ReminderSettingsRow()
+
+        // Reminder settings grouped in a card
+        Card(shape = CardShape,
+            colors = CardDefaults.cardColors(containerColor = Color.White.copy(alpha = 0.06f))) {
+            Box(Modifier.padding(horizontal = 16.dp, vertical = 10.dp)) {
+                ReminderSettingsRow()
+            }
+        }
 
         Spacer(Modifier.height(24.dp))
     }
+    }
+}
+
+// ===================== Calendar building blocks =====================
+
+/** One stat tile: big colored number over a small label. */
+@Composable
+private fun StatTile(value: String, label: String, valueColor: Color, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .background(Color.White.copy(alpha = 0.06f), RoundedCornerShape(12.dp))
+            .padding(vertical = 10.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Text(value, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = valueColor)
+        Spacer(Modifier.height(2.dp))
+        Text(label, fontSize = 10.sp, color = MutedColor)
+    }
+}
+
+/** Milestone pill: green-tinted when reached, dimmed with days remaining otherwise. */
+@Composable
+private fun MilestonePill(m: Milestone, total: Int, modifier: Modifier = Modifier) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+        modifier = modifier
+            .background(
+                if (m.reached) DoneGreen.copy(alpha = 0.18f) else Color.White.copy(alpha = 0.06f),
+                RoundedCornerShape(50.dp),
+            )
+            .padding(vertical = 5.dp),
+    ) {
+        Text(m.emoji, fontSize = 13.sp, modifier = Modifier.alpha(if (m.reached) 1f else 0.45f))
+        Spacer(Modifier.width(4.dp))
+        Text(
+            if (m.reached) "${m.days}天" else "差${m.days - total}天",
+            fontSize = 12.sp,
+            fontWeight = if (m.reached) FontWeight.SemiBold else FontWeight.Normal,
+            color = if (m.reached) DoneGreen else MutedColor,
+        )
     }
 }
 
@@ -707,20 +744,33 @@ private fun ReminderSettingsRow() {
 
 @Composable
 fun DayCell(isDay: Boolean, checked: Boolean, isToday: Boolean, day: Int) {
-    val textColor = when {
-        !isDay -> MutedColor
-        isToday -> AccentCyan
-        else -> ContentColor
-    }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(if (isDay) "${day}" else "",
-            fontSize = 15.sp, color = textColor,
-            fontWeight = if (isToday) FontWeight.Bold else FontWeight.Normal)
-        Spacer(Modifier.height(2.dp))
-        if (checked) {
-            Box(Modifier.size(6.dp).background(DoneGreen, RoundedCornerShape(3.dp)))
-        } else if (isDay) {
-            Box(Modifier.size(6.dp).background(SegDimColor, RoundedCornerShape(3.dp)))
+    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        if (!isDay) return@Box
+        val shape = RoundedCornerShape(10.dp)
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .then(
+                    if (!checked && isToday)
+                        Modifier.border(1.5.dp, AccentCyan.copy(alpha = 0.8f), shape)
+                    else Modifier
+                )
+                .background(
+                    if (checked) DoneGreen.copy(alpha = 0.9f) else Color.Transparent,
+                    shape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                "$day",
+                fontSize = 14.sp,
+                fontWeight = if (checked || isToday) FontWeight.Bold else FontWeight.Normal,
+                color = when {
+                    checked -> OnDoneGreen   // dark ink on the green fill
+                    isToday -> AccentCyan
+                    else -> ContentColor
+                },
+            )
         }
     }
 }
