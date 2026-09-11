@@ -41,6 +41,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.LocalDate
 import java.time.YearMonth
+import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -198,14 +199,16 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
     // so a running workout is not reset by configuration changes.
     LaunchedEffect(mode) { if (vm.state.value.mode != mode) vm.setMode(mode) }
 
-    // Auto check-in: exactly once per completed workout (dedup by day is
-    // handled inside CheckInLog, so the same day never double counts).
-    var recordedToday by remember { mutableStateOf(false) }
+    // Auto check-in: once per completed workout per DAY — guarded by the last
+    // recorded date, not a boolean, so finishing a workout just after midnight
+    // still records the new day (dedup by day also lives in CheckInLog).
+    var recordedOn by remember { mutableStateOf<LocalDate?>(null) }
     LaunchedEffect(state.phase) {
-        if (state.phase == Phase.DONE && !recordedToday) {
-            recordedToday = true
+        val today = LocalDate.now()
+        if (state.phase == Phase.DONE && recordedOn != today) {
+            recordedOn = today
             val log = CheckInLog.parse(checkinsRaw)
-            log.add(LocalDate.now())
+            log.add(today)
             onCheckIn(log.serialize())
         }
     }
@@ -636,9 +639,9 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
 @Composable
 private fun ReminderSettingsRow() {
     val context = LocalContext.current
-    val enabled = remember { mutableStateOf(ReminderScheduler.isEnabled(context)) }
-    val time = remember { mutableStateOf(ReminderScheduler.time(context)) }
-    val permDenied = remember { mutableStateOf(false) }
+    var enabled by remember { mutableStateOf(ReminderScheduler.isEnabled(context)) }
+    var time by remember { mutableStateOf(ReminderScheduler.time(context)) }
+    var permDenied by remember { mutableStateOf(false) }
 
     // POST_NOTIFICATIONS is a runtime permission on API 33+; denial keeps the
     // switch off and shows a hint instead of scheduling a silent alarm.
@@ -646,11 +649,11 @@ private fun ReminderSettingsRow() {
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
-            permDenied.value = false
-            enabled.value = true
+            permDenied = false
+            enabled = true
             ReminderScheduler.setEnabled(context, true)
         } else {
-            permDenied.value = true
+            permDenied = true
         }
     }
 
@@ -659,32 +662,32 @@ private fun ReminderSettingsRow() {
             Text("⏰ 每日提醒", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
             Spacer(Modifier.weight(1f))
             Text(
-                "%02d:%02d".format(time.value.first, time.value.second),
+                "%02d:%02d".format(Locale.ROOT, time.first, time.second),
                 fontSize = 15.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold,
                 modifier = Modifier
                     .clickable {
-                        val (h, m) = time.value
+                        val (h, m) = time
                         TimePickerDialog(context, { _, ph, pm ->
-                            time.value = ph to pm
+                            time = ph to pm
                             // Persist the new time; reschedule only if active.
-                            ReminderScheduler.setEnabled(context, enabled.value, ph, pm)
+                            ReminderScheduler.setEnabled(context, enabled, ph, pm)
                         }, h, m, true).show()
                     }
                     .padding(horizontal = 8.dp),
             )
             Switch(
-                checked = enabled.value,
+                checked = enabled,
                 onCheckedChange = { want ->
                     when {
                         !want -> {
-                            enabled.value = false
-                            permDenied.value = false
+                            enabled = false
+                            permDenied = false
                             ReminderScheduler.setEnabled(context, false)
                         }
                         Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
                             notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
                         else -> {
-                            enabled.value = true
+                            enabled = true
                             ReminderScheduler.setEnabled(context, true)
                         }
                     }
@@ -693,8 +696,8 @@ private fun ReminderSettingsRow() {
         }
         Text(
             when {
-                permDenied.value -> "未授予通知权限，无法提醒；可在系统设置中开启"
-                enabled.value -> "每天到点提醒，当天已完成锻炼则不打扰"
+                permDenied -> "未授予通知权限，无法提醒；可在系统设置中开启"
+                enabled -> "每天到点提醒，当天已完成锻炼则不打扰"
                 else -> "开启后每天到点提醒一次（默认 20:00）"
             },
             fontSize = 12.sp, color = MutedColor,

@@ -9,7 +9,8 @@ import android.content.Context
 // task). One small ASCII string per read/write — see CheckIn.kt.
 
 object CheckInStore {
-    private const val PREFS_NAME = "spine_checkins"
+    /** Shared prefs file — reminder settings live here too (see ReminderScheduler). */
+    const val PREFS_NAME = "spine_checkins"
     private const val KEY_RAW = "raw_v1"
 
     /** Load the whole check-in history ("" when nothing stored yet). */

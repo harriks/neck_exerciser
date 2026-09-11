@@ -11,8 +11,8 @@ import java.util.TreeSet
 //
 // Persistence footprint matters: rather than storing a list of verbose
 // "yyyy-MM-dd" strings (11 bytes each), each date is converted to its
-// epoch day (days since 1970-01-01, ~3-4 base36 chars) and compacted into a
-// single string read/written once by the UI's rememberSaveable store.
+// epoch day (days since 1970-01-01, ~3-4 base36 chars) and compacted into
+// a single string persisted via CheckInStore (SharedPreferences).
 
 /**
  * Immutable-by-convention log of check-in days.
