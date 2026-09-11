@@ -88,6 +88,40 @@ class WorkoutEngineTest {
     }
 
     @Test
+    fun `gentle speak sequence alternates hands each rep and finishes`() {
+        // Behavior lock for the engine-path unification: gentle must keep its
+        // exact per-rep announcement sequence (放松 + 请换X手发力) and the
+        // completion announcement, regardless of which code path advances it.
+        engine.setMode(Mode.GENTLE)
+        engine.start()
+        advanceSeconds(3) // first contract begins (entry announce)
+        engine.drainEvents()
+
+        val speaks = mutableListOf<String>()
+        repeat(7) { // relax->contract transitions for reps 2..8
+            advanceSeconds(8 + 5)
+            speaks += engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
+        }
+        assertEquals(
+            listOf(
+                "放松", "请换右手发力",
+                "放松", "请换左手发力",
+                "放松", "请换右手发力",
+                "放松", "请换左手发力",
+                "放松", "请换右手发力",
+                "放松", "请换左手发力",
+                "放松", "请换右手发力",
+            ),
+            speaks,
+        )
+
+        advanceSeconds(8 + 5) // rep 8 relax done -> finish
+        val final = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
+        assertEquals(Phase.DONE, engine.state.phase)
+        assertTrue("finish speaks=$final", final.contains("恭喜，全部完成，做得好"))
+    }
+
+    @Test
     fun `gentle elapsed time is exact and monotonic across phases`() {
         engine.setMode(Mode.GENTLE)
         engine.start()

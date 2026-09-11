@@ -239,6 +239,7 @@ paused: 是否暂停
 - **WorkoutEngine.kt**：纯 Kotlin 状态机（无 Android 依赖）
   - 锚点计时：每个阶段记录绝对结束时间戳，倒计时/总用时零漂移
   - 事件输出：语音/音效以 `EngineEvent`（Speak/Sfx）形式发出，由 ViewModel 播放
+  - 推进统一走 `advanceGroup()`：舒缓=单阶段配置，与等长抗阻共用同一路径，零模式分支
   - `TimerState` + `buildState()` 工厂也在此文件；`completedGroups` 已预计算
 - **TimerViewModel.kt**：只负责桥接 —— 200ms tick 驱动 engine，将事件转为
   ToneGenerator/TTS 调用；时钟用 `SystemClock.elapsedRealtime()`（单调时钟）

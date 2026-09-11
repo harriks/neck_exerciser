@@ -30,7 +30,7 @@ data class TimerState(
     val phaseText: String get() = when (phase) {
         Phase.IDLE -> "准备就绪"
         Phase.PREPARE -> "⏳ 准备"
-        Phase.CONTRACT -> if (mode == Mode.ISOMETRIC) "💪 $stageName" else "💪 温和发力"
+        Phase.CONTRACT -> "💪 $stageName" // gentle's single stage is 温和发力
         Phase.RELAX -> "🍃 放松"
         Phase.DONE -> "🎉 完成"
     }
@@ -244,35 +244,26 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         val newRep = s.repCount + 1
         val elapsedSec = currentElapsedSec(now, paused = false)
 
-        if (s.mode == Mode.ISOMETRIC) {
-            val (newGi, newDi, newSi, hasMore) = advanceGroup(s)
-            if (!hasMore) { finish(elapsedSec, newRep); return }
-            val st = Config.stageOf(s.mode, newSi)
-            _state = buildState(s.mode, newSi, newDi, newGi, newRep,
-                countdown = st.contractSec, phase = Phase.CONTRACT, running = true,
-                elapsed = elapsedSec)
-            phaseEndMs = now + st.contractSec * 1000L
-            // Stage transition announcement (merged into one utterance: TTS flushes queue).
-            // Uniform concise cue: only the next stage's "开始" (no end/hand hints).
-            if (newSi != s.si) {
-                pendingEvents += EngineEvent.Speak("${stageTalk(st)}开始")
-            } else if (st.dirs.size > 1) {
-                // 多方向阶段内换手提示
-                pendingEvents += EngineEvent.Speak("请换${st.dirs[newDi]}发力")
-            } else {
-                // 单方向阶段（弹力带）：放松结束后提示继续
-                pendingEvents += EngineEvent.Speak("继续训练")
-            }
+        // One path for every mode: gentle is just a single-stage config, so
+        // advanceGroup's stage/direction/group math covers it identically
+        // (groups is per-direction; a stage ends after dirs × groups reps).
+        val (newGi, newDi, newSi, hasMore) = advanceGroup(s)
+        if (!hasMore) { finish(elapsedSec, newRep); return }
+        val st = Config.stageOf(s.mode, newSi)
+        _state = buildState(s.mode, newSi, newDi, newGi, newRep,
+            countdown = st.contractSec, phase = Phase.CONTRACT, running = true,
+            elapsed = elapsedSec)
+        phaseEndMs = now + st.contractSec * 1000L
+        // Stage transition announcement (merged into one utterance: TTS flushes queue).
+        // Uniform concise cue: only the next stage's "开始" (no end/hand hints).
+        if (newSi != s.si) {
+            pendingEvents += EngineEvent.Speak("${stageTalk(st)}开始")
+        } else if (st.dirs.size > 1) {
+            // 多方向阶段内换手提示（舒缓单阶段也走这里：逐轮换手）
+            pendingEvents += EngineEvent.Speak("请换${st.dirs[newDi]}发力")
         } else {
-            // groups is per-direction (see CLAUDE.md §3): gentle alternates every
-            // rep, so the stage finishes after dirs × groups total reps.
-            if (newRep >= s.dirCount * s.groupCount) { finish(elapsedSec, newRep); return }
-            val newDi = (s.di + 1) % s.dirCount
-            _state = buildState(s.mode, s.si, newDi, newRep, newRep,
-                countdown = s.contractSec, phase = Phase.CONTRACT, running = true,
-                elapsed = elapsedSec)
-            phaseEndMs = now + s.contractSec * 1000L
-            pendingEvents += EngineEvent.Speak("请换${Config.stageOf(s.mode, s.si).dirs[newDi]}发力")
+            // 单方向阶段（弹力带）：放松结束后提示继续
+            pendingEvents += EngineEvent.Speak("继续训练")
         }
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.SWITCH)
     }
