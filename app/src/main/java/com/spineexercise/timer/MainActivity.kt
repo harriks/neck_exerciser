@@ -188,6 +188,8 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
     val state by vm.state.collectAsStateWithLifecycle()
 
     var showCalendar by remember { mutableStateOf(false) }
+    var showTips by remember { mutableStateOf(false) }
+    var showAbout by remember { mutableStateOf(false) }
     if (showCalendar) {
         // Calendar shown in-place so the ViewModel survives (no progress lost).
         CalendarScreen(raw = checkinsRaw, onBack = { showCalendar = false })
@@ -224,13 +226,17 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
         // Top spacing: title near top with 48dp margin
         Spacer(Modifier.height(48.dp))
 
-        // Header
+        // Header: single overflow menu (calendar / tips / about)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Spacer(Modifier.weight(1f))
-            CalendarShortcutButton { showCalendar = true }
-            Spacer(Modifier.width(8.dp))
-            TipsButton(mode)
+            HeaderMenuButton(
+                onOpenCalendar = { showCalendar = true },
+                onOpenTips = { showTips = true },
+                onOpenAbout = { showAbout = true },
+            )
         }
+        TipsDialog(mode, showTips) { showTips = false }
+        AboutDialog(showAbout) { showAbout = false }
 
         Spacer(Modifier.height(8.dp))
 
@@ -440,38 +446,87 @@ fun StageProgress(state: TimerState) {
     }
 }
 
-// ===================== Tips =====================
+// ===================== Tips / About / Menu =====================
 
+/** Overflow menu anchored at the header's top-right corner. */
 @Composable
-fun TipsButton(mode: Mode) {
+fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit, onOpenAbout: () -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }, modifier = Modifier.size(32.dp)) {
+            Text("⋮", fontSize = 20.sp, color = ContentColor, modifier = Modifier.alpha(0.8f))
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(text = { Text("📅 打卡日历") }, onClick = { expanded = false; onOpenCalendar() })
+            DropdownMenuItem(text = { Text("📋 锻炼要点") }, onClick = { expanded = false; onOpenTips() })
+            DropdownMenuItem(text = { Text("ℹ️ 关于") }, onClick = { expanded = false; onOpenAbout() })
+        }
+    }
+}
+
+/** Exercise tips dialog; shown from the header menu. */
+@Composable
+fun TipsDialog(mode: Mode, visible: Boolean, onDismiss: () -> Unit) {
+    if (!visible) return
     val tips = remember(mode) { Config.tips[mode] ?: emptyList() }
-    var showDialog by remember { mutableStateOf(false) }
-
-    IconButton(onClick = { showDialog = true }, modifier = Modifier.size(32.dp)) {
-        Text("📋", fontSize = 16.sp, modifier = Modifier.alpha(0.6f))
-    }
-
-    if (showDialog) {
-        AlertDialog(
-            onDismissRequest = { showDialog = false },
-            confirmButton = {
-                TextButton(onClick = { showDialog = false }) {
-                    Text("知道了", color = AccentCyan)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("知道了", color = AccentCyan)
+            }
+        },
+        title = { Text("📋 锻炼要点", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        text = {
+            Column {
+                tips.forEach { tip ->
+                    Text("• $tip", fontSize = 13.sp, color = SubTextColor, lineHeight = 20.sp,
+                        modifier = Modifier.padding(bottom = 4.dp))
                 }
-            },
-            title = { Text("📋 锻炼要点", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
-            text = {
-                Column {
-                    tips.forEach { tip ->
-                        Text("• $tip", fontSize = 13.sp, color = SubTextColor, lineHeight = 20.sp,
-                            modifier = Modifier.padding(bottom = 4.dp))
-                    }
-                }
-            },
-            containerColor = Color(0xFF2D3E50),
-            shape = TipShape,
-        )
+            }
+        },
+        containerColor = Color(0xFF2D3E50),
+        shape = TipShape,
+    )
+}
+
+/** About dialog with the app version from PackageManager. */
+@Composable
+fun AboutDialog(visible: Boolean, onDismiss: () -> Unit) {
+    if (!visible) return
+    val context = LocalContext.current
+    val versionText = remember {
+        runCatching {
+            val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+            val code = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
+            "版本 ${pi.versionName} (${code})"
+        }.getOrDefault("版本未知")
     }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("好", color = AccentCyan)
+            }
+        },
+        title = { Text("ℹ️ 关于", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()) {
+                Text("🦴", fontSize = 40.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("颈椎锻炼", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                Spacer(Modifier.height(4.dp))
+                Text(versionText, fontSize = 13.sp, color = HintColor)
+                Spacer(Modifier.height(10.dp))
+                Text("温和的等长颈椎锻炼计时器\n舒缓 / 等长抗阻 · 语音引导 · 打卡日历",
+                    fontSize = 12.sp, color = SubTextColor, textAlign = TextAlign.Center,
+                    lineHeight = 18.sp)
+            }
+        },
+        containerColor = Color(0xFF2D3E50),
+        shape = TipShape,
+    )
 }
 
 
@@ -516,13 +571,6 @@ fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
 }
 
 // ===================== Calendar (打卡日历) =====================
-
-@Composable
-fun CalendarShortcutButton(onOpen: () -> Unit) {
-    IconButton(onClick = onOpen, modifier = Modifier.size(32.dp)) {
-        Text("📅", fontSize = 16.sp, modifier = Modifier.alpha(0.6f))
-    }
-}
 
 @Composable
 fun CalendarScreen(raw: String, onBack: () -> Unit) {
