@@ -38,6 +38,10 @@
             ├── WorkoutEngine.kt   # 纯 Kotlin 状态机（锚点计时）
             ├── TimerViewModel.kt  # 桥接：tick 驱动引擎 + 音效/TTS
             ├── CheckIn.kt         # 打卡记录（纯 Kotlin，紧凑序列化 v1:base36 epochDay）
+            ├── CheckInStore.kt    # 打卡持久化（SharedPreferences，单一数据源）
+            ├── ReminderPolicy.kt  # 提醒决策纯函数（shouldNotify / nextTriggerAt，可单测）
+            ├── ReminderScheduler.kt  # 闹钟调度 + 通知渠道（Android 胶水）
+            ├── ReminderReceiver.kt / BootReceiver.kt  # 通知发送 / 开机重排
             ├── Colors.kt          # 阶段颜色
 ## 3. 时长配置（JSON）
 
@@ -242,10 +246,19 @@ paused: 是否暂停
 - **Colors.kt**：`PhaseColors` 从 Model.kt 迁出，Model 保持纯 Kotlin 可单测
 - **MainActivity.kt**：`rememberSaveable` 保存所选模式；旋转屏幕不再重置锻炼
   （`LaunchedEffect(mode)` 仅在模式变化时 setMode；返回按钮负责 reset）
-- **打卡日历**：`CheckIn.kt` 存打卡天数（TreeSet 去重 + 紧凑 `v1:base36` 序列化，
-  单条字符串经 `rememberSaveable` 持久化）；完成锻炼进 `Phase.DONE` 时当天打卡，
-  首页/计时页「📅」进入 `CalendarScreen`（月历视图，`CalendarScreen`/`DayCell`）
-- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `CheckInLogTest.kt`（JUnit4）
+- **打卡日历**：`CheckIn.kt` 纯 Kotlin 打卡日志（TreeSet 去重 + 紧凑 `v1:base36` 序列化）；
+  持久化经 `CheckInStore.kt`（SharedPreferences `"spine_checkins"`，单一数据源，
+  `AppNavigation` 写穿保存——冷启动/划掉任务后历史不丢）；完成锻炼进 `Phase.DONE` 时当天打卡
+  （`CheckInLog` 按天去重防双计）；首页/计时页「📅」进入 `CalendarScreen`
+  （月历视图 + 🔥 连续/最长 streak + 里程碑徽章行 7🥉/30🥈/100🥇/365👑）
+- **每日提醒**：`ReminderPolicy.kt` 纯函数（`shouldNotify` 当天已打卡则跳过；
+  `nextTriggerAt` 已过时刻滚动到明天）+ `ReminderScheduler.kt`
+  （`setInexactRepeating` 非精确重复闹钟，免 SCHEDULE_EXACT_ALARM 权限）+
+  `ReminderReceiver`（发送通知）/ `BootReceiver`（开机重排，闹钟不跨重启）；
+  设置入口在日历页底部（Switch + TimePickerDialog；API 33+ 运行时请求 POST_NOTIFICATIONS，
+  拒绝则开关回退并提示）；非精确闹钟允许分钟级偏差，DST 变更可偏移 1 小时直至下次重排
+- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `CheckInLogTest.kt` +
+  `ReminderPolicyTest.kt`（JUnit4，共 44 例）
 
 ## 7. 已知限制
 
