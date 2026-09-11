@@ -10,11 +10,15 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.scaleIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -28,6 +32,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -38,6 +43,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.LocalDate
@@ -448,19 +455,100 @@ fun StageProgress(state: TimerState) {
 
 // ===================== Tips / About / Menu =====================
 
-/** Overflow menu anchored at the header's top-right corner. */
+/** Overflow menu anchored at the header's top-right corner (custom card + pop-in). */
 @Composable
 fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit, onOpenAbout: () -> Unit) {
     var expanded by remember { mutableStateOf(false) }
+    // Micro-interaction: the kebab rotates into a dash while the menu is open
+    val rotation by animateFloatAsState(
+        if (expanded) 90f else 0f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        label = "menuIcon",
+    )
     Box {
         IconButton(onClick = { expanded = true }, modifier = Modifier.size(32.dp)) {
-            Text("⋮", fontSize = 20.sp, color = ContentColor, modifier = Modifier.alpha(0.8f))
+            Text("⋮", fontSize = 20.sp, color = ContentColor,
+                modifier = Modifier.alpha(0.85f).graphicsLayer { rotationZ = rotation })
         }
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            DropdownMenuItem(text = { Text("📅 打卡日历") }, onClick = { expanded = false; onOpenCalendar() })
-            DropdownMenuItem(text = { Text("📋 锻炼要点") }, onClick = { expanded = false; onOpenTips() })
-            DropdownMenuItem(text = { Text("ℹ️ 关于") }, onClick = { expanded = false; onOpenAbout() })
+        if (expanded) {
+            Dialog(
+                onDismissRequest = { expanded = false },
+                properties = DialogProperties(usePlatformDefaultWidth = false),
+            ) {
+                val appear = remember { MutableTransitionState(false).apply { targetState = true } }
+                // Dim scrim doubles as the outside-tap catcher
+                Box(
+                    Modifier.fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.35f))
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { expanded = false },
+                ) {
+                    AnimatedVisibility(
+                        visibleState = appear,
+                        modifier = Modifier.align(Alignment.TopEnd).padding(top = 52.dp, end = 20.dp),
+                        enter = scaleIn(
+                            initialScale = 0.8f,
+                            transformOrigin = TransformOrigin(1f, 0f), // grows from the kebab corner
+                            animationSpec = spring(dampingRatio = 0.8f, stiffness = Spring.StiffnessMediumLow),
+                        ) + fadeIn(),
+                    ) {
+                        Card(
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF2D3E50)),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
+                        ) {
+                            Column(Modifier.width(200.dp).padding(vertical = 6.dp)) {
+                                MenuRow("📅", "打卡日历", DoneGreen, onClick = { expanded = false; onOpenCalendar() })
+                                MenuRow("📋", "锻炼要点", TipHeaderColor, onClick = { expanded = false; onOpenTips() })
+                                Divider(color = Color.White.copy(alpha = 0.14f),
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
+                                MenuRow("ℹ️", "关于", AccentCyan, trailing = rememberAppVersionLabel(),
+                                    onClick = { expanded = false; onOpenAbout() })
+                            }
+                        }
+                    }
+                }
+            }
         }
+    }
+}
+
+/** One styled menu row: accent-tinted emoji chip + title (+ optional trailing label). */
+@Composable
+private fun MenuRow(emoji: String, title: String, accent: Color,
+                    trailing: String? = null, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 11.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(30.dp)
+                .background(accent.copy(alpha = 0.15f), RoundedCornerShape(8.dp)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(emoji, fontSize = 14.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        Text(title, fontSize = 15.sp, color = ContentColor)
+        Spacer(Modifier.weight(1f))
+        if (trailing != null) Text(trailing, fontSize = 11.sp, color = MutedColor)
+    }
+}
+
+/** Compact version label for the menu's 关于 row, e.g. "1.0". */
+@Composable
+private fun rememberAppVersionLabel(): String {
+    val context = LocalContext.current
+    return remember {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "?"
+        }.getOrDefault("?")
     }
 }
 
