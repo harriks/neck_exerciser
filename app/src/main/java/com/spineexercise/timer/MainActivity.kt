@@ -10,15 +10,23 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
+import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -45,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import java.time.LocalDate
@@ -94,6 +103,19 @@ fun AppTheme(content: @Composable () -> Unit) {
         onBackground = ContentColor, onSurface = ContentColor,
     )
     MaterialTheme(colorScheme = colorScheme, content = content)
+}
+
+// ===================== Shared entrance animation =====================
+
+/** Entrance helper: fade + slide-up; [delayMs] staggers siblings into a cascade. */
+@Composable
+private fun FadeSlideIn(delayMs: Int = 0, content: @Composable () -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { delay(delayMs.toLong()); visible = true }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(320)) + slideInVertically(tween(320)) { it / 3 },
+    ) { content() }
 }
 
 // ===================== TTS Voice =====================
@@ -146,23 +168,33 @@ fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit) {
     ) {
         Spacer(Modifier.weight(0.3f))
 
-        Text("🦴", fontSize = 72.sp)
-        Spacer(Modifier.height(20.dp))
-        Text("颈椎锻炼", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-        Text("选择锻炼模式开始", fontSize = 15.sp, color = HintColor,
-            modifier = Modifier.padding(top = 8.dp))
+        FadeSlideIn {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("🦴", fontSize = 72.sp)
+                Spacer(Modifier.height(20.dp))
+                Text("颈椎锻炼", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                Text("选择锻炼模式开始", fontSize = 15.sp, color = HintColor,
+                    modifier = Modifier.padding(top = 8.dp))
+            }
+        }
 
         Spacer(Modifier.weight(0.4f))
 
-        ModeCard("💪", "舒缓锻炼", "温和发力 8s / 放松 5s / 左右交替 8 次",
-            "20%~30% 轻微力量，适合日常放松", AccentCyan) { onSelect(Mode.GENTLE) }
+        FadeSlideIn(90) {
+            ModeCard("💪", "舒缓锻炼", "温和发力 8s / 放松 5s / 左右交替 8 次",
+                "20%~30% 轻微力量，适合日常放松", AccentCyan) { onSelect(Mode.GENTLE) }
+        }
         Spacer(Modifier.height(16.dp))
-        ModeCard("🔒", "等长抗阻", "正向抗阻 → 侧向抗阻 → 弹力带训练",
-            "3个阶段，共15组，静态持续发力", AccentOrange) { onSelect(Mode.ISOMETRIC) }
+        FadeSlideIn(180) {
+            ModeCard("🔒", "等长抗阻", "正向抗阻 → 侧向抗阻 → 弹力带训练",
+                "3个阶段，共15组，静态持续发力", AccentOrange) { onSelect(Mode.ISOMETRIC) }
+        }
 
         Spacer(Modifier.height(16.dp))
-        ModeCard("📅", "打卡日历", "查看本月训练打卡情况",
-            "每次完成锻炼自动帮你记下当天", DoneGreen) { onOpenCalendar() }
+        FadeSlideIn(270) {
+            ModeCard("📅", "打卡日历", "查看本月训练打卡情况",
+                "每次完成锻炼自动帮你记下当天", DoneGreen) { onOpenCalendar() }
+        }
 
         Spacer(Modifier.weight(0.3f))
     }
@@ -170,8 +202,19 @@ fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit) {
 
 @Composable
 fun ModeCard(emoji: String, title: String, desc: String, tips: String, color: Color, onClick: () -> Unit) {
+    // Press feedback: card shrinks slightly while held (on top of the ripple)
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        if (pressed) 0.97f else 1f,
+        animationSpec = spring(stiffness = Spring.StiffnessMedium),
+        label = "cardPress",
+    )
     Button(
-        onClick = onClick, modifier = Modifier.fillMaxWidth(), shape = CardShape,
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = scale; scaleY = scale },
+        interactionSource = interaction,
+        shape = CardShape,
         colors = ButtonDefaults.buttonColors(containerColor = color.copy(alpha = 0.12f)),
         contentPadding = PaddingValues(20.dp),
     ) {
@@ -247,9 +290,18 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
 
         Spacer(Modifier.height(8.dp))
 
-        // Phase text (title area, pinned near top)
-        Text(state.phaseText, fontSize = 30.sp, fontWeight = FontWeight.Bold,
-            color = ContentColor, letterSpacing = 2.sp)
+        // Phase text (title area, pinned near top); slides between phases
+        AnimatedContent(
+            targetState = state.phaseText,
+            transitionSpec = {
+                (fadeIn(tween(220)) + slideInVertically(tween(220)) { it / 4 }) togetherWith
+                    fadeOut(tween(140))
+            },
+            label = "phaseText",
+        ) { text ->
+            Text(text, fontSize = 30.sp, fontWeight = FontWeight.Bold,
+                color = ContentColor, letterSpacing = 2.sp)
+        }
 
         Spacer(Modifier.height(4.dp))
 
@@ -264,7 +316,11 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
         TimerRing(state)
 
         Spacer(Modifier.height(12.dp))
-        if (state.running || state.phase == Phase.DONE) {
+        AnimatedVisibility(
+            visible = state.running || state.phase == Phase.DONE,
+            enter = fadeIn(tween(250)) + expandVertically(),
+            exit = fadeOut(tween(200)) + shrinkVertically(),
+        ) {
             StageProgress(state)
         }
 
@@ -683,34 +739,40 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         Spacer(Modifier.height(16.dp))
 
         // ---- Stat strip: one glance = streak / best / month / total ----
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            StatTile("${log.currentStreak(today)}", "连续", AccentOrange, Modifier.weight(1f))
-            StatTile("${log.longestStreak()}", "最长", AccentCyan, Modifier.weight(1f))
-            StatTile("${log.countInMonth(ym)}", "本月", DoneGreen, Modifier.weight(1f))
-            StatTile("${log.total}", "累计", AccentBlue, Modifier.weight(1f))
+        FadeSlideIn {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                StatTile("${log.currentStreak(today)}", "连续", AccentOrange, Modifier.weight(1f))
+                StatTile("${log.longestStreak()}", "最长", AccentCyan, Modifier.weight(1f))
+                StatTile("${log.countInMonth(ym)}", "本月", DoneGreen, Modifier.weight(1f))
+                StatTile("${log.total}", "累计", AccentBlue, Modifier.weight(1f))
+            }
         }
 
         Spacer(Modifier.height(10.dp))
 
         // Milestone pills: reached = green tint, else dimmed with days remaining
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            log.milestones().forEach { m -> MilestonePill(m, log.total, Modifier.weight(1f)) }
+        FadeSlideIn(70) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                log.milestones().forEach { m -> MilestonePill(m, log.total, Modifier.weight(1f)) }
+            }
         }
 
         Spacer(Modifier.height(18.dp))
 
         // Month navigation
-        Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
-            verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1))) {
-                Text("‹", fontSize = 22.sp, color = AccentCyan)
-            }
-            Spacer(Modifier.weight(1f))
-            Text("${ym.year} 年 ${ym.monthValue} 月", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = { ym = ym.plusMonths(1) }) {
-                Text("›", fontSize = 22.sp, color = AccentCyan)
+        FadeSlideIn(140) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
+                verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1))) {
+                    Text("‹", fontSize = 22.sp, color = AccentCyan)
+                }
+                Spacer(Modifier.weight(1f))
+                Text("${ym.year} 年 ${ym.monthValue} 月", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = { ym = ym.plusMonths(1) }) {
+                    Text("›", fontSize = 22.sp, color = AccentCyan)
+                }
             }
         }
 
@@ -728,22 +790,29 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
 
         Spacer(Modifier.height(6.dp))
 
-        // Day grid: leading blanks so the 1st lands on the right column
-        val firstOffset = ym.atDay(1).dayOfWeek.value - 1 // 0 = Monday
-        val daysInMonth = ym.lengthOfMonth()
-        val totalCells = ((firstOffset + daysInMonth + 6) / 7) * 7
-        repeat(totalCells / 7) { row ->
-            if (row > 0) Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                repeat(7) { col ->
-                    val idx = row * 7 + col
-                    val dayNumber = idx - firstOffset + 1
-                    val isDay = dayNumber in 1..daysInMonth
-                    val date = if (isDay) ym.atDay(dayNumber) else null
-                    val checked = date != null && log.hasInMonth(ym, dayNumber)
-                    val isToday = date == today
-                    Box(Modifier.weight(1f)) {
-                        DayCell(isDay = isDay, checked = checked, isToday = isToday, day = dayNumber)
+        // Day grid: leading blanks so the 1st lands on the right column;
+        // crossfades when the user flips months
+        FadeSlideIn(210) {
+            Crossfade(targetState = ym, animationSpec = tween(250), label = "monthGrid") { month ->
+                Column {
+                    val firstOffset = month.atDay(1).dayOfWeek.value - 1 // 0 = Monday
+                    val daysInMonth = month.lengthOfMonth()
+                    val totalCells = ((firstOffset + daysInMonth + 6) / 7) * 7
+                    repeat(totalCells / 7) { row ->
+                        if (row > 0) Spacer(Modifier.height(4.dp))
+                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                            repeat(7) { col ->
+                                val idx = row * 7 + col
+                                val dayNumber = idx - firstOffset + 1
+                                val isDay = dayNumber in 1..daysInMonth
+                                val date = if (isDay) month.atDay(dayNumber) else null
+                                val checked = date != null && log.hasInMonth(month, dayNumber)
+                                val isToday = date == today
+                                Box(Modifier.weight(1f)) {
+                                    DayCell(isDay = isDay, checked = checked, isToday = isToday, day = dayNumber)
+                                }
+                            }
+                        }
                     }
                 }
             }
