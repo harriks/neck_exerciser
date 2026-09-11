@@ -1,13 +1,19 @@
 package com.spineexercise.timer
 
+import android.Manifest
+import android.app.TimePickerDialog
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -616,8 +622,83 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
 
         Spacer(Modifier.height(24.dp))
         Text("完成一次锻炼后，当天自动记录打卡 ✦", fontSize = 12.sp, color = MutedColor)
+
+        Spacer(Modifier.height(20.dp))
+        ReminderSettingsRow()
+
         Spacer(Modifier.height(24.dp))
     }
+    }
+}
+
+// ===================== Reminder settings (每日提醒) =====================
+
+@Composable
+private fun ReminderSettingsRow() {
+    val context = LocalContext.current
+    val enabled = remember { mutableStateOf(ReminderScheduler.isEnabled(context)) }
+    val time = remember { mutableStateOf(ReminderScheduler.time(context)) }
+    val permDenied = remember { mutableStateOf(false) }
+
+    // POST_NOTIFICATIONS is a runtime permission on API 33+; denial keeps the
+    // switch off and shows a hint instead of scheduling a silent alarm.
+    val notifPerm = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            permDenied.value = false
+            enabled.value = true
+            ReminderScheduler.setEnabled(context, true)
+        } else {
+            permDenied.value = true
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Text("⏰ 每日提醒", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
+            Spacer(Modifier.weight(1f))
+            Text(
+                "%02d:%02d".format(time.value.first, time.value.second),
+                fontSize = 15.sp, color = AccentCyan, fontWeight = FontWeight.SemiBold,
+                modifier = Modifier
+                    .clickable {
+                        val (h, m) = time.value
+                        TimePickerDialog(context, { _, ph, pm ->
+                            time.value = ph to pm
+                            // Persist the new time; reschedule only if active.
+                            ReminderScheduler.setEnabled(context, enabled.value, ph, pm)
+                        }, h, m, true).show()
+                    }
+                    .padding(horizontal = 8.dp),
+            )
+            Switch(
+                checked = enabled.value,
+                onCheckedChange = { want ->
+                    when {
+                        !want -> {
+                            enabled.value = false
+                            permDenied.value = false
+                            ReminderScheduler.setEnabled(context, false)
+                        }
+                        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ->
+                            notifPerm.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        else -> {
+                            enabled.value = true
+                            ReminderScheduler.setEnabled(context, true)
+                        }
+                    }
+                },
+            )
+        }
+        Text(
+            when {
+                permDenied.value -> "未授予通知权限，无法提醒；可在系统设置中开启"
+                enabled.value -> "每天到点提醒，当天已完成锻炼则不打扰"
+                else -> "开启后每天到点提醒一次（默认 20:00）"
+            },
+            fontSize = 12.sp, color = MutedColor,
+        )
     }
 }
 
