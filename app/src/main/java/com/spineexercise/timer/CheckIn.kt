@@ -49,6 +49,49 @@ class CheckInLog private constructor(private val days: TreeSet<Int>) {
         return view.size
     }
 
+    /** Count of check-in days inside calendar [year] (for the year header stat). */
+    fun countInYear(year: Int): Int {
+        val first = epochDay(LocalDate.of(year, 1, 1))
+        val last = epochDay(LocalDate.of(year + 1, 1, 1))
+        return days.subSet(first, last).size
+    }
+
+    /**
+     * Consecutive check-in days as of [today], with the usual "grace" rule:
+     * when today is not checked in yet the streak is anchored at yesterday, so
+     * simply not having worked out yet today does not break an ongoing run.
+     */
+    fun currentStreak(today: LocalDate): Int {
+        var cursor = epochDay(today)
+        if (!days.contains(cursor)) {
+            cursor -= 1
+            if (!days.contains(cursor)) return 0
+        }
+        var streak = 0
+        while (days.contains(cursor)) {
+            streak++
+            cursor--
+        }
+        return streak
+    }
+
+    /** Longest run of consecutive check-in days in the entire history. */
+    fun longestStreak(): Int {
+        var best = 0
+        var run = 0
+        var prev = Int.MIN_VALUE
+        for (day in days) {
+            run = if (day == prev + 1) run + 1 else 1
+            if (run > best) best = run
+            prev = day
+        }
+        return best
+    }
+
+    /** Milestone badges evaluated against the cumulative [total]. */
+    fun milestones(): List<Milestone> =
+        MILESTONE_STEPS.map { (d, emoji) -> Milestone(d, emoji, total >= d) }
+
     /**
      * Compact serialization: one small ASCII string.
      *
@@ -73,6 +116,9 @@ class CheckInLog private constructor(private val days: TreeSet<Int>) {
     companion object {
         private val EPOCH = LocalDate.of(1970, 1, 1)
         private val B36 = "0123456789abcdefghijklmnopqrstuvwxyz"
+
+        /** Cumulative-day milestone steps: badge emoji per threshold. */
+        private val MILESTONE_STEPS = listOf(7 to "🥉", 30 to "🥈", 100 to "🥇", 365 to "👑")
 
         /** Create an empty log. */
         fun empty(): CheckInLog = CheckInLog(TreeSet())
@@ -131,3 +177,9 @@ class CheckInLog private constructor(private val days: TreeSet<Int>) {
         }
     }
 }
+
+/**
+ * A cumulative check-in milestone badge: reached when [CheckInLog.total]
+ * is at least [days]; [emoji] is the badge glyph shown in the calendar UI.
+ */
+data class Milestone(val days: Int, val emoji: String, val reached: Boolean)
