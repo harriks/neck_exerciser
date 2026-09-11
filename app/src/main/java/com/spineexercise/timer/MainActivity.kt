@@ -47,6 +47,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -270,11 +272,12 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
     Box(Modifier.fillMaxSize()) {
     Column(
         modifier = Modifier.fillMaxSize().background(BgBrush)
+            .statusBarsPadding()
             .verticalScroll(rememberScrollState()).padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Top spacing: title near top with 48dp margin
-        Spacer(Modifier.height(48.dp))
+        // Top spacing (below the status bar, consistent with the calendar page)
+        Spacer(Modifier.height(16.dp))
 
         // Header: single overflow menu (calendar / tips / about)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
@@ -309,8 +312,8 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
         Text(state.phaseHint, fontSize = 14.sp, color = HintColor, textAlign = TextAlign.Center,
             modifier = Modifier.padding(horizontal = 20.dp).heightIn(min = 36.dp))
 
-        // Upper spacer (smaller weight pushes ring slightly above center)
-        Spacer(Modifier.weight(0.85f))
+        // Upper spacer (balanced rhythm: ring sits closer to the hint text)
+        Spacer(Modifier.weight(0.55f))
 
         // Timer ring
         TimerRing(state)
@@ -324,8 +327,8 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
             StageProgress(state)
         }
 
-        // Lower spacer (larger weight keeps ring above center, pushes controls down)
-        Spacer(Modifier.weight(1.15f))
+        // Lower spacer (near-even with the upper one; controls stay reachable)
+        Spacer(Modifier.weight(0.5f))
         Spacer(Modifier.height(20.dp))
 
         // Controls
@@ -353,7 +356,8 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
                     vm.speak("重置")
                     vm.resetWorkout()
                 },
-                modifier = Modifier.weight(1f).height(52.dp),
+                modifier = Modifier.weight(1f).height(52.dp)
+                    .border(1.5.dp, SubTextColor.copy(alpha = 0.45f), BtnShape),
                 shape = BtnShape,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor),
             ) {
@@ -427,13 +431,13 @@ fun TimerRing(state: TimerState) {
     val animatedProgress = remember { Animatable(0f) }
     LaunchedEffect(progress) { animatedProgress.animateTo(progress, tween(220)) }
 
-    // Pre-compute static arc params
-    val strokeW = 8.dp
+    // Pre-compute static arc params (thicker stroke balances the big digit)
+    val strokeW = 11.dp
     val bgRingColor = RingBgColor
 
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier.size(280.dp).graphicsLayer {
+        modifier = Modifier.size(330.dp).graphicsLayer {
             // Read animatables here (draw phase) — no recomposition per frame
             scaleX = if (state.phase == Phase.CONTRACT) pulse.value else 1f
             scaleY = if (state.phase == Phase.CONTRACT) pulse.value else 1f
@@ -441,7 +445,7 @@ fun TimerRing(state: TimerState) {
         },
     ) {
         Spacer(
-            Modifier.size(280.dp).drawBehind {
+            Modifier.size(330.dp).drawBehind {
                 val sw = strokeW.toPx()
                 val pad = sw / 2
                 val arcSize = Size(size.width - sw, size.height - sw)
@@ -460,7 +464,7 @@ fun TimerRing(state: TimerState) {
             Phase.DONE -> "✓"
             else -> "${state.countdown}"
         }
-        Text(timeText, fontSize = 56.sp, fontWeight = FontWeight.ExtraBold, color = countdownColor)
+        Text(timeText, fontSize = 48.sp, fontWeight = FontWeight.ExtraBold, color = countdownColor)
     }
 }
 
@@ -499,10 +503,10 @@ fun StageProgress(state: TimerState) {
                 val color = when {
                     i < completed -> DoneGreen
                     i == completed -> AccentOrange
-                    else -> SegDimColor
+                    else -> Color.White.copy(alpha = 0.18f) // brighter track, visible on navy
                 }
                 key(i) {
-                    Box(Modifier.weight(1f).height(6.dp).background(color, SegShape))
+                    Box(Modifier.weight(1f).height(8.dp).background(color, SegShape))
                 }
             }
         }
@@ -522,7 +526,8 @@ fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit, onOpenA
         label = "menuIcon",
     )
     Box {
-        IconButton(onClick = { expanded = true }, modifier = Modifier.size(32.dp)) {
+        IconButton(onClick = { expanded = true }, modifier = Modifier.size(32.dp)
+            .semantics { contentDescription = "菜单" }) {
             Text("⋮", fontSize = 20.sp, color = ContentColor,
                 modifier = Modifier.alpha(0.85f).graphicsLayer { rotationZ = rotation })
         }
@@ -764,13 +769,15 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         FadeSlideIn(140) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1))) {
+                IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1)),
+                    modifier = Modifier.semantics { contentDescription = "上一个月" }) {
                     Text("‹", fontSize = 22.sp, color = AccentCyan)
                 }
                 Spacer(Modifier.weight(1f))
                 Text("${ym.year} 年 ${ym.monthValue} 月", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
                 Spacer(Modifier.weight(1f))
-                IconButton(onClick = { ym = ym.plusMonths(1) }) {
+                IconButton(onClick = { ym = ym.plusMonths(1) },
+                    modifier = Modifier.semantics { contentDescription = "下一个月" }) {
                     Text("›", fontSize = 22.sp, color = AccentCyan)
                 }
             }
@@ -935,6 +942,7 @@ private fun ReminderSettingsRow() {
                         }
                     }
                 },
+                modifier = Modifier.semantics { contentDescription = "每日提醒开关" },
             )
         }
         Text(
@@ -957,7 +965,9 @@ fun DayCell(isDay: Boolean, checked: Boolean, isToday: Boolean, day: Int) {
             modifier = Modifier
                 .size(34.dp)
                 .then(
-                    if (!checked && isToday)
+                    // Today always gets a cyan ring — also on top of a checked
+                    // green fill, so "today" never looks like any other day.
+                    if (isToday)
                         Modifier.border(1.5.dp, AccentCyan.copy(alpha = 0.8f), shape)
                     else Modifier
                 )
