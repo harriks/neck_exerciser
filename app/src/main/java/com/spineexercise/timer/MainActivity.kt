@@ -1,9 +1,11 @@
 package com.spineexercise.timer
 
 import android.Manifest
+import android.app.Activity
 import android.app.TimePickerDialog
 import android.os.Build
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -260,6 +262,16 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
     // Only switch mode when it actually changed; the ViewModel survives rotation,
     // so a running workout is not reset by configuration changes.
     LaunchedEffect(mode) { if (vm.state.value.mode != mode) vm.setMode(mode) }
+
+    // Keep the screen awake while a workout runs — a timer app should never
+    // sleep mid-set. Cleared when the workout ends or this screen leaves.
+    val activityWindow = (LocalContext.current as? Activity)?.window
+    DisposableEffect(state.running) {
+        if (state.running) {
+            activityWindow?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        onDispose { activityWindow?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
 
     // Auto check-in: once per completed workout per DAY — guarded by the last
     // recorded date, not a boolean, so finishing a workout just after midnight
