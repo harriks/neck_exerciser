@@ -73,6 +73,9 @@ class MainActivity : ComponentActivity() {
         TimingStore.load(this).takeIf { it.isNotBlank() }?.let { json ->
             runCatching { Config.configure(json) } // corrupt storage → keep defaults
         }
+        // Re-arm the daily reminder with the current alarm mechanism — cheap and
+        // idempotent, and migrates any stale alarm from an older app version.
+        if (ReminderScheduler.isEnabled(this)) ReminderScheduler.schedule(this)
         setContent { AppTheme { AppNavigation() } }
     }
 }

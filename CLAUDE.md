@@ -259,10 +259,13 @@ paused: 是否暂停
   （月历视图 + 🔥 连续/最长 streak + 里程碑徽章行 7🥉/30🥈/100🥇/365👑）
 - **每日提醒**：`ReminderPolicy.kt` 纯函数（`shouldNotify` 当天已打卡则跳过；
   `nextTriggerAt` 已过时刻滚动到明天）+ `ReminderScheduler.kt`
-  （`setInexactRepeating` 非精确重复闹钟，免 SCHEDULE_EXACT_ALARM 权限）+
-  `ReminderReceiver`（发送通知）/ `BootReceiver`（开机重排，闹钟不跨重启）；
+  （`setAlarmClock` 精确闹钟 + `USE_EXACT_ALARM` 权限，穿 Doze；触发后由
+  `ReminderReceiver` 自续期次日——一次性闹钟链取代 `setInexactRepeating`，
+  后者文档允许首次触发延迟近一个完整周期=一天，实际"不如期"）+
+  `ReminderReceiver`（先续期再门控发通知）/ `BootReceiver`（开机重排）+
+  MainActivity onCreate 兼容性重排（升级迁移）；
   设置入口在日历页底部（Switch + TimePickerDialog；API 33+ 运行时请求 POST_NOTIFICATIONS，
-  拒绝则开关回退并提示）；非精确闹钟允许分钟级偏差，DST 变更可偏移 1 小时直至下次重排
+  拒绝则开关回退并提示）；状态栏会显示系统闹钟图标（setAlarmClock 语义，提醒已设定）
 - **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `CheckInLogTest.kt` +
   `ReminderPolicyTest.kt`（JUnit4，共 44 例）
 

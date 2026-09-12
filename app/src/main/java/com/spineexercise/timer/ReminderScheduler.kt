@@ -26,7 +26,6 @@ object ReminderScheduler {
 
     const val CHANNEL_ID = "reminder"
     private const val REQUEST_CODE = 1001
-    private const val INTERVAL_MS = 86_400_000L // 1 day in ms
 
     // ---- settings ----
 
@@ -59,14 +58,27 @@ object ReminderScheduler {
 
     // ---- alarm wiring ----
 
-    /** (Re)arm the repeating alarm from the stored settings. */
+    /**
+     * Arm the NEXT daily reminder as an alarm-clock one-shot: fires exactly at
+     * the stored time, wakes the device out of Doze, needs no special
+     * permission, and shows the system alarm icon while armed.
+     *
+     * This replaced setInexactRepeating, whose documented batching could delay
+     * the first trigger by up to a full interval (= a full day for us) — the
+     * reminder simply did not show up on time. Daily repetition is now a
+     * self-perpetuating chain: ReminderReceiver re-arms the next day when it
+     * fires, and BootReceiver re-arms after reboot.
+     */
     fun schedule(context: Context) {
         val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager ?: return
         val (hour, minute) = time(context)
         val triggerAtMs = ReminderPolicy
             .nextTriggerAt(hour, minute, LocalDateTime.now())
             .atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
-        am.setInexactRepeating(AlarmManager.RTC_WAKEUP, triggerAtMs, INTERVAL_MS, pendingIntent(context))
+        am.setAlarmClock(
+            AlarmManager.AlarmClockInfo(triggerAtMs, showIntent(context)),
+            pendingIntent(context),
+        )
     }
 
     fun cancel(context: Context) {
@@ -76,6 +88,12 @@ object ReminderScheduler {
 
     private fun pendingIntent(context: Context): PendingIntent = PendingIntent.getBroadcast(
         context, REQUEST_CODE, Intent(context, ReminderReceiver::class.java),
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+
+    /** Tapping the status-bar alarm icon opens the app. */
+    private fun showIntent(context: Context): PendingIntent = PendingIntent.getActivity(
+        context, 0, Intent(context, MainActivity::class.java),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 

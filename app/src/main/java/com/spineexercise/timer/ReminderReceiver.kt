@@ -9,16 +9,26 @@ import android.content.Intent
 import java.time.LocalDate
 
 // ===================== Reminder receiver =====================
-// Fired by the (inexact) daily alarm. All decisions are pure Kotlin
+// Fired by the daily alarm-clock. All decisions are pure Kotlin
 // (ReminderPolicy); this class only reads state, gates, and posts the
 // notification via platform APIs (no androidx.core dependency).
+//
+// The alarm is a one-shot: re-arming tomorrow happens HERE first (before any
+// gate can return), so the daily chain never breaks — skipping today's
+// notification (already checked in) still leaves tomorrow armed.
 
 class ReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        val enabled = ReminderScheduler.isEnabled(context)
+        if (!enabled) return // stale alarm firing after the user disabled
+
+        // Perpetuate the chain first: tomorrow at the same time.
+        ReminderScheduler.schedule(context)
+
         val checkedInToday =
             CheckInLog.parse(CheckInStore.load(context)).has(LocalDate.now())
-        if (!ReminderPolicy.shouldNotify(ReminderScheduler.isEnabled(context), checkedInToday)) return
+        if (!ReminderPolicy.shouldNotify(enabled, checkedInToday)) return
 
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
         if (!nm.areNotificationsEnabled()) return // permission revoked since arming
