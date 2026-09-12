@@ -116,15 +116,16 @@ fun AppTheme(content: @Composable () -> Unit) {
 
 // ===================== Shared entrance animation =====================
 
-/** Entrance helper: fade + slide-up; [delayMs] staggers siblings into a cascade. */
+/**
+ * Entrance helper: alpha fade-in, [delayMs] staggers siblings into a cascade.
+ * Fade-only on purpose — slide/expand enter animations re-run layout every
+ * frame and measured 65% janky on the home screen; pure alpha stays cheap.
+ */
 @Composable
-private fun FadeSlideIn(delayMs: Int = 0, content: @Composable () -> Unit) {
+private fun FadeIn(delayMs: Int = 0, content: @Composable () -> Unit) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { delay(delayMs.toLong()); visible = true }
-    AnimatedVisibility(
-        visible = visible,
-        enter = fadeIn(tween(320)) + slideInVertically(tween(320)) { it / 3 },
-    ) { content() }
+    AnimatedVisibility(visible = visible, enter = fadeIn(tween(260))) { content() }
 }
 
 // ===================== TTS Voice =====================
@@ -153,7 +154,13 @@ fun AppNavigation() {
             onBack = { showCalendar = false },
         )
     } else if (selectedMode == null) {
-        ModeSelectScreen(onSelect = { selectedMode = it }, onOpenCalendar = { showCalendar = true })
+        val checkinLog = remember(checkinsRaw) { CheckInLog.parse(checkinsRaw) }
+        ModeSelectScreen(
+            onSelect = { selectedMode = it },
+            onOpenCalendar = { showCalendar = true },
+            streakDays = checkinLog.currentStreak(LocalDate.now()),
+            totalDays = checkinLog.total,
+        )
     } else {
         TimerScreen(
             mode = selectedMode!!,
@@ -170,47 +177,73 @@ fun AppNavigation() {
 // ===================== Mode Select Screen =====================
 
 @Composable
-fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit) {
-    Column(
-        modifier = Modifier.fillMaxSize().background(BgBrush).padding(horizontal = 32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.weight(0.3f))
+fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit,
+                     streakDays: Int, totalDays: Int) {
+    // One fade for the whole screen (cheap); cards keep their press-scale feel.
+    FadeIn {
+        Column(
+            modifier = Modifier.fillMaxSize().background(BgBrush)
+                .statusBarsPadding().padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Spacer(Modifier.weight(0.26f))
 
-        FadeSlideIn {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("🦴", fontSize = 72.sp)
-                Spacer(Modifier.height(20.dp))
-                Text("颈椎锻炼", fontSize = 32.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-                Text("选择锻炼模式开始", fontSize = 15.sp, color = HintColor,
-                    modifier = Modifier.padding(top = 8.dp))
+            // Compact header: icon chip + title inline
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier.size(48.dp)
+                        .background(AccentCyan.copy(alpha = 0.12f), RoundedCornerShape(24.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text("🦴", fontSize = 26.sp)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text("颈椎锻炼", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                    Text("温和的颈椎锻炼计时器", fontSize = 11.sp, color = MutedColor)
+                }
             }
-        }
 
-        Spacer(Modifier.weight(0.4f))
+            Spacer(Modifier.weight(0.34f))
 
-        FadeSlideIn(90) {
-            ModeCard("💪", "舒缓锻炼", "温和发力 8s / 放松 5s / 左右交替 8 次",
-                "20%~30% 轻微力量，适合日常放松", AccentCyan) { onSelect(Mode.GENTLE) }
-        }
-        Spacer(Modifier.height(16.dp))
-        FadeSlideIn(180) {
-            ModeCard("🔒", "等长抗阻", "正向抗阻 → 侧向抗阻 → 弹力带训练",
-                "3个阶段，共15组，静态持续发力", AccentOrange) { onSelect(Mode.ISOMETRIC) }
-        }
+            // Primary actions: the two workouts, side by side
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()) {
+                ModeCard("💪", "舒缓锻炼", "8s 发力 · 5s 放松\n左右交替 8 轮",
+                    AccentCyan, Modifier.weight(1f)) { onSelect(Mode.GENTLE) }
+                ModeCard("🔒", "等长抗阻", "3 阶段 · 15 组\n静态持续发力",
+                    AccentOrange, Modifier.weight(1f)) { onSelect(Mode.ISOMETRIC) }
+            }
 
-        Spacer(Modifier.height(16.dp))
-        FadeSlideIn(270) {
-            ModeCard("📅", "打卡日历", "查看本月训练打卡情况",
-                "每次完成锻炼自动帮你记下当天", DoneGreen) { onOpenCalendar() }
-        }
+            Spacer(Modifier.height(12.dp))
 
-        Spacer(Modifier.weight(0.3f))
+            // Secondary: compact calendar row with live streak data
+            Button(
+                onClick = onOpenCalendar,
+                modifier = Modifier.fillMaxWidth(),
+                shape = CardShape,
+                colors = ButtonDefaults.buttonColors(containerColor = DoneGreen.copy(alpha = 0.10f)),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+            ) {
+                Text("📅", fontSize = 18.sp)
+                Spacer(Modifier.width(10.dp))
+                Text("打卡日历", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DoneGreen)
+                Spacer(Modifier.weight(1f))
+                Text(
+                    if (totalDays == 0) "完成锻炼自动打卡"
+                    else "🔥 连续 $streakDays 天 · 累计 $totalDays 天",
+                    fontSize = 12.sp, color = HintColor,
+                )
+            }
+
+            Spacer(Modifier.weight(0.4f))
+        }
     }
 }
 
 @Composable
-fun ModeCard(emoji: String, title: String, desc: String, tips: String, color: Color, onClick: () -> Unit) {
+fun ModeCard(emoji: String, title: String, desc: String, color: Color,
+             modifier: Modifier = Modifier, onClick: () -> Unit) {
     // Press feedback: card shrinks slightly while held (on top of the ripple)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
@@ -221,20 +254,19 @@ fun ModeCard(emoji: String, title: String, desc: String, tips: String, color: Co
     )
     Button(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth().graphicsLayer { scaleX = scale; scaleY = scale },
+        modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale },
         interactionSource = interaction,
         shape = CardShape,
         colors = ButtonDefaults.buttonColors(containerColor = color.copy(alpha = 0.12f)),
-        contentPadding = PaddingValues(20.dp),
+        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-            Text(emoji, fontSize = 36.sp)
-            Spacer(Modifier.height(8.dp))
-            Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = color)
+            Text(emoji, fontSize = 28.sp)
             Spacer(Modifier.height(6.dp))
-            Text(desc, fontSize = 13.sp, color = SubTextColor, textAlign = TextAlign.Center)
-            Text(tips, fontSize = 12.sp, color = MutedColor, textAlign = TextAlign.Center,
-                modifier = Modifier.padding(top = 4.dp))
+            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = color)
+            Spacer(Modifier.height(4.dp))
+            Text(desc, fontSize = 11.sp, color = SubTextColor, textAlign = TextAlign.Center,
+                lineHeight = 15.sp)
         }
     }
 }
@@ -875,7 +907,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         Spacer(Modifier.height(16.dp))
 
         // ---- Stat strip: one glance = streak / best / month / total ----
-        FadeSlideIn {
+        FadeIn {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 StatTile("${log.currentStreak(today)}", "连续", AccentOrange, Modifier.weight(1f))
                 StatTile("${log.longestStreak()}", "最长", AccentCyan, Modifier.weight(1f))
@@ -887,7 +919,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         Spacer(Modifier.height(10.dp))
 
         // Milestone pills: reached = green tint, else dimmed with days remaining
-        FadeSlideIn(70) {
+        FadeIn(70) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 log.milestones().forEach { m -> MilestonePill(m, log.total, Modifier.weight(1f)) }
@@ -897,7 +929,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         Spacer(Modifier.height(18.dp))
 
         // Month navigation
-        FadeSlideIn(140) {
+        FadeIn(140) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1)),
@@ -930,7 +962,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
 
         // Day grid: leading blanks so the 1st lands on the right column;
         // crossfades when the user flips months
-        FadeSlideIn(210) {
+        FadeIn(210) {
             Crossfade(targetState = ym, animationSpec = tween(250), label = "monthGrid") { month ->
                 Column {
                     val firstOffset = month.atDay(1).dayOfWeek.value - 1 // 0 = Monday
