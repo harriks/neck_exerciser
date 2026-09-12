@@ -12,3 +12,10 @@ local.properties
 # IDE
 .idea/
 
+# APKs are distributed via GitHub Releases, not committed
+*.apk
+
+# Worktrees / temp files
+.worktrees/
+*.e2e_*
+
