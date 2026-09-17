@@ -4,7 +4,7 @@
 
 **中文** | [English](README_EN.md)
 
-![Platform](https://img.shields.io/badge/Platform-Android-blue) ![Version](https://img.shields.io/badge/version-1.9.2(12)-green) ![minSdk](https://img.shields.io/badge/minSdk-26%20(Android%208.0)-orange) ![Deps](https://img.shields.io/badge/dependencies-zero-success) ![Tests](https://img.shields.io/badge/unit%20tests-63-brightgreen)
+![Platform](https://img.shields.io/badge/Platform-Android-blue) ![Version](https://img.shields.io/badge/version-1.3.0(4)-green) ![minSdk](https://img.shields.io/badge/minSdk-26%20(Android%208.0)-orange) ![Deps](https://img.shields.io/badge/dependencies-zero-success) ![Tests](https://img.shields.io/badge/unit%20tests-63-brightgreen)
 
 ## 📸 界面预览
 
