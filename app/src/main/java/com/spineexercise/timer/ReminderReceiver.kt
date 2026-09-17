@@ -20,6 +20,10 @@ import java.time.LocalDate
 class ReminderReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
+        // Cold-process safety: resolve the language (override or system locale)
+        // before any user-facing string is built below.
+        L10nStore.init(context)
+
         val enabled = ReminderScheduler.isEnabled(context)
         if (!enabled) return // stale alarm firing after the user disabled
 
@@ -42,8 +46,8 @@ class ReminderReceiver : BroadcastReceiver() {
         )
         val notification = Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
-            .setContentTitle("🦴 颈椎锻炼时间到")
-            .setContentText("几分钟的温柔锻炼，让颈椎放松一下")
+            .setContentTitle(L10n.s.notifTitle)
+            .setContentText(L10n.s.notifBody)
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()

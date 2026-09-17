@@ -13,8 +13,8 @@ android {
         applicationId = "com.spineexercise.timer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 12
+        versionName = "1.9.2"
     }
     signingConfigs {
         create("release") {

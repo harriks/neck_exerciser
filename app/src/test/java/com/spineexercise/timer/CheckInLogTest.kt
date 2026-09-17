@@ -28,19 +28,67 @@ class CheckInLogTest {
     @Test
     fun `add marks the day and dedups within the same day`() {
         val log = CheckInLog.empty()
-        assertTrue(log.add(d(2026, 9, 11)))  // new
-        assertFalse(log.add(d(2026, 9, 11))) // same day again -> not new
+        assertTrue(log.add(d(2026, 9, 11), Mode.GENTLE))   // new
+        assertFalse(log.add(d(2026, 9, 11), Mode.GENTLE))  // same day again -> not new
         assertTrue(log.has(d(2026, 9, 11)))
-        assertEquals(1, log.total)           // still only one day
+        assertEquals(1, log.total)                          // still only one day
     }
 
     @Test
     fun `distinct days are counted separately`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 9, 10))
-        log.add(d(2026, 9, 11))
-        log.add(d(2026, 9, 12))
+        log.add(d(2026, 9, 10), Mode.GENTLE)
+        log.add(d(2026, 9, 11), Mode.GENTLE)
+        log.add(d(2026, 9, 12), Mode.GENTLE)
         assertEquals(3, log.total)
+    }
+
+    // ---------- per-mode counts ----------
+
+    @Test
+    fun `same day records both modes as one day with merged mask`() {
+        val log = CheckInLog.empty()
+        assertTrue(log.add(d(2026, 9, 11), Mode.GENTLE))
+        assertFalse(log.add(d(2026, 9, 11), Mode.ISOMETRIC)) // day already exists
+        assertTrue(log.hasMode(d(2026, 9, 11), Mode.GENTLE))
+        assertTrue(log.hasMode(d(2026, 9, 11), Mode.ISOMETRIC))
+        assertEquals(1, log.total)                            // one day, both modes
+        assertEquals("v2:fz7.3", log.serialize())             // 1|2 = 3
+    }
+
+    @Test
+    fun `hasMode is false for unchecked days`() {
+        val log = CheckInLog.containing(d(2026, 9, 11), Mode.ISOMETRIC)
+        assertTrue(log.hasMode(d(2026, 9, 11), Mode.ISOMETRIC))
+        assertFalse(log.hasMode(d(2026, 9, 11), Mode.GENTLE))
+        assertFalse(log.hasMode(d(2026, 9, 12), Mode.ISOMETRIC))
+    }
+
+    @Test
+    fun `countModeInMonth counts per-mode days within a month`() {
+        val log = CheckInLog.empty()
+        log.add(d(2026, 9, 1), Mode.GENTLE)
+        log.add(d(2026, 9, 2), Mode.GENTLE)
+        log.add(d(2026, 9, 2), Mode.ISOMETRIC) // same day, other mode
+        log.add(d(2026, 9, 20), Mode.ISOMETRIC)
+        log.add(d(2026, 10, 1), Mode.ISOMETRIC) // outside the month
+
+        val ym = YearMonth.of(2026, 9)
+        assertEquals(2, log.countModeInMonth(ym, Mode.GENTLE))
+        assertEquals(2, log.countModeInMonth(ym, Mode.ISOMETRIC))
+        assertEquals(0, log.countModeInMonth(YearMonth.of(2026, 8), Mode.GENTLE))
+        assertTrue(log.hasModeInMonth(ym, 2, Mode.ISOMETRIC))
+        assertFalse(log.hasModeInMonth(ym, 1, Mode.ISOMETRIC))
+    }
+
+    @Test
+    fun `countModeTotal spans months and years`() {
+        val log = CheckInLog.empty()
+        log.add(d(2025, 12, 31), Mode.ISOMETRIC)
+        log.add(d(2026, 1, 1), Mode.GENTLE)
+        log.add(d(2026, 6, 15), Mode.GENTLE)
+        assertEquals(2, log.countModeTotal(Mode.GENTLE))
+        assertEquals(1, log.countModeTotal(Mode.ISOMETRIC))
     }
 
     // ---------- month helpers ----------
@@ -48,10 +96,10 @@ class CheckInLogTest {
     @Test
     fun `countInMonth and hasInMonth reflect only that month`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 8, 31))
-        log.add(d(2026, 9, 1))
-        log.add(d(2026, 9, 15))
-        log.add(d(2026, 10, 1))
+        log.add(d(2026, 8, 31), Mode.GENTLE)
+        log.add(d(2026, 9, 1), Mode.GENTLE)
+        log.add(d(2026, 9, 15), Mode.ISOMETRIC)
+        log.add(d(2026, 10, 1), Mode.GENTLE)
 
         val ym = YearMonth.of(2026, 9)
         assertEquals(2, log.countInMonth(ym))
@@ -63,34 +111,44 @@ class CheckInLogTest {
     // ---------- serialize / parse ----------
 
     @Test
-    fun `empty log round-trips to an empty v1 string`() {
-        assertEquals("v1:", CheckInLog.empty().serialize())
-        assertEquals(0, CheckInLog.parse("v1:").total)
+    fun `empty log round-trips to an empty v2 string`() {
+        assertEquals("v2:", CheckInLog.empty().serialize())
+        assertEquals(0, CheckInLog.parse("v2:").total)
     }
 
     @Test
     fun `serialize is compact and read back identically`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 9, 11)) // epochDay 20707 -> "fz7"
-        log.add(d(2026, 9, 12)) // epochDay 20708 -> "fz8"
+        log.add(d(2026, 9, 11), Mode.GENTLE) // epochDay 20707 -> "fz7"
+        log.add(d(2026, 9, 12), Mode.GENTLE) // epochDay 20708 -> "fz8"
         val s = log.serialize()
-        assertTrue("expected compact base36, got: $s", s.startsWith("v1:fz7,fz8"))
+        assertTrue("expected compact base36, got: $s", s.startsWith("v2:fz7.1,fz8.1"))
         assertTrue("serialized size should stay small, was ${s.length}", s.length < 20)
 
         val back = CheckInLog.parse(s)
         assertEquals(2, back.total)
         assertTrue(back.has(d(2026, 9, 11)))
         assertTrue(back.has(d(2026, 9, 12)))
+        assertTrue(back.hasMode(d(2026, 9, 11), Mode.GENTLE))
     }
 
     @Test
     fun `serialize emits sorted ascending tokens regardless of insert order`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 9, 12))
-        log.add(d(2026, 9, 10)) // epochDay 20706 -> "fz6"
-        log.add(d(2026, 9, 11)) // epochDay 20707 -> "fz7"
+        log.add(d(2026, 9, 12), Mode.GENTLE)
+        log.add(d(2026, 9, 10), Mode.GENTLE) // epochDay 20706 -> "fz6"
+        log.add(d(2026, 9, 11), Mode.GENTLE) // epochDay 20707 -> "fz7"
         // epochDay ascending => base36 ascending
-        assertEquals("v1:fz6,fz7,fz8", log.serialize())
+        assertEquals("v2:fz6.1,fz7.1,fz8.1", log.serialize())
+    }
+
+    @Test
+    fun `serialize omits the mask suffix for zero-mask entries`() {
+        // A v2 string may carry mask-less days (legacy); round-trip keeps them
+        val back = CheckInLog.parse("v2:fz7,fz8.2")
+        assertEquals("v2:fz7,fz8.2", back.serialize())
+        assertFalse(back.hasMode(d(2026, 9, 11), Mode.GENTLE))
+        assertTrue(back.hasMode(d(2026, 9, 12), Mode.ISOMETRIC))
     }
 
     // ---------- tolerant parsing ----------
@@ -98,18 +156,33 @@ class CheckInLogTest {
     @Test
     fun `parse handles empty and missing prefix gracefully`() {
         assertEquals(0, CheckInLog.parse("").total)
-        assertEquals(0, CheckInLog.parse("v1:").total)
-        // missing v1 prefix still parsed
+        assertEquals(0, CheckInLog.parse("v2:").total)
+        // missing version prefix still parsed
         val back = CheckInLog.parse("fz7,fz8")
         assertEquals(2, back.total)
     }
 
     @Test
-    fun `parse skips malformed tokens without throwing`() {
-        val back = CheckInLog.parse("v1:fz7,zzzz,garbage,,fz8,-1,999999999999999999")
+    fun `legacy v1 string parses with days but no mode info`() {
+        val back = CheckInLog.parse("v1:fz7,fz8")
         assertEquals(2, back.total)
         assertTrue(back.has(d(2026, 9, 11)))
         assertTrue(back.has(d(2026, 9, 12)))
+        // v1 predates modes: counts stay in day stats, per-mode counts stay 0
+        assertFalse(back.hasMode(d(2026, 9, 11), Mode.GENTLE))
+        assertFalse(back.hasMode(d(2026, 9, 11), Mode.ISOMETRIC))
+        assertEquals(0, back.countModeTotal(Mode.GENTLE))
+    }
+
+    @Test
+    fun `parse skips malformed tokens without throwing`() {
+        val back = CheckInLog.parse("v2:fz7,zzzz,garbage,,fz8.2,-1,999999999999999999,fz9.xx")
+        assertEquals(3, back.total) // fz7 (mask 0), fz8 (mask 2), fz9 (bad mask -> 0)
+        assertTrue(back.has(d(2026, 9, 11)))
+        assertTrue(back.has(d(2026, 9, 12)))
+        assertTrue(back.has(d(2026, 9, 13)))
+        assertTrue(back.hasMode(d(2026, 9, 12), Mode.ISOMETRIC))
+        assertFalse(back.hasMode(d(2026, 9, 13), Mode.GENTLE))
     }
 
     // ---------- streak ----------
@@ -122,17 +195,17 @@ class CheckInLogTest {
     @Test
     fun `currentStreak counts a run ending today`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 9, 9))
-        log.add(d(2026, 9, 10))
-        log.add(d(2026, 9, 11))
+        log.add(d(2026, 9, 9), Mode.GENTLE)
+        log.add(d(2026, 9, 10), Mode.ISOMETRIC)
+        log.add(d(2026, 9, 11), Mode.GENTLE)
         assertEquals(3, log.currentStreak(d(2026, 9, 11)))
     }
 
     @Test
     fun `currentStreak anchors at yesterday when today is not checked in yet`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 9, 9))
-        log.add(d(2026, 9, 10))
+        log.add(d(2026, 9, 9), Mode.GENTLE)
+        log.add(d(2026, 9, 10), Mode.GENTLE)
         // 9/11 unchecked: not having worked out yet today does not break the run
         assertEquals(2, log.currentStreak(d(2026, 9, 11)))
     }
@@ -140,9 +213,9 @@ class CheckInLogTest {
     @Test
     fun `currentStreak breaks across a gap`() {
         val log = CheckInLog.empty()
-        log.add(d(2026, 9, 5))
-        log.add(d(2026, 9, 6))
-        log.add(d(2026, 9, 7))
+        log.add(d(2026, 9, 5), Mode.GENTLE)
+        log.add(d(2026, 9, 6), Mode.GENTLE)
+        log.add(d(2026, 9, 7), Mode.GENTLE)
         assertEquals(0, log.currentStreak(d(2026, 9, 11)))
     }
 
@@ -151,15 +224,15 @@ class CheckInLogTest {
         assertEquals(0, CheckInLog.empty().longestStreak())
 
         val scattered = CheckInLog.empty()
-        scattered.add(d(2026, 1, 1))
-        scattered.add(d(2026, 1, 3))
-        scattered.add(d(2026, 1, 5))
+        scattered.add(d(2026, 1, 1), Mode.GENTLE)
+        scattered.add(d(2026, 1, 3), Mode.GENTLE)
+        scattered.add(d(2026, 1, 5), Mode.GENTLE)
         assertEquals(1, scattered.longestStreak())
 
         val mixed = CheckInLog.empty()
-        mixed.add(d(2026, 1, 1)); mixed.add(d(2026, 1, 2))            // run of 2
-        mixed.add(d(2026, 3, 10)); mixed.add(d(2026, 3, 11))
-        mixed.add(d(2026, 3, 12)); mixed.add(d(2026, 3, 13))          // run of 4
+        mixed.add(d(2026, 1, 1), Mode.GENTLE); mixed.add(d(2026, 1, 2), Mode.GENTLE)   // run of 2
+        mixed.add(d(2026, 3, 10), Mode.GENTLE); mixed.add(d(2026, 3, 11), Mode.GENTLE)
+        mixed.add(d(2026, 3, 12), Mode.GENTLE); mixed.add(d(2026, 3, 13), Mode.GENTLE) // run of 4
         assertEquals(4, mixed.longestStreak())
     }
 
@@ -168,9 +241,9 @@ class CheckInLogTest {
     @Test
     fun `countInYear respects year boundaries`() {
         val log = CheckInLog.empty()
-        log.add(d(2025, 12, 31))
-        log.add(d(2026, 1, 1))
-        log.add(d(2026, 6, 15))
+        log.add(d(2025, 12, 31), Mode.GENTLE)
+        log.add(d(2026, 1, 1), Mode.GENTLE)
+        log.add(d(2026, 6, 15), Mode.GENTLE)
         assertTrue(log.has(d(2025, 12, 31)))
         assertFalse(log.has(d(2026, 1, 2)))
         assertEquals(1, log.countInYear(2025))
@@ -187,13 +260,13 @@ class CheckInLogTest {
         assertTrue(none.milestones().none { it.reached })
 
         val seven = CheckInLog.empty()
-        repeat(7) { seven.add(d(2026, 1, 1).plusDays(it.toLong())) }
+        repeat(7) { seven.add(d(2026, 1, 1).plusDays(it.toLong()), Mode.GENTLE) }
         val ms = seven.milestones()
         assertTrue(ms.first { it.days == 7 }.reached)
         assertFalse(ms.first { it.days == 30 }.reached)
 
         val all = CheckInLog.empty()
-        repeat(366) { all.add(d(2025, 1, 1).plusDays(it.toLong())) }
+        repeat(366) { all.add(d(2025, 1, 1).plusDays(it.toLong()), Mode.GENTLE) }
         assertTrue(all.milestones().all { it.reached })
     }
 
@@ -203,6 +276,6 @@ class CheckInLogTest {
     fun `epoch day math matches known date`() {
         // 2026-09-11 = epoch day 20707 (calendar days since 1970-01-01)
         val log = CheckInLog.containing(d(2026, 9, 11))
-        assertEquals("v1:fz7", log.serialize())
+        assertEquals("v2:fz7.1", log.serialize())
     }
 }

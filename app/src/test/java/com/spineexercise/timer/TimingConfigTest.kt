@@ -11,10 +11,11 @@ class TimingConfigTest {
     fun `default config parses with current values`() {
         val c = TimingConfig.default()
         assertEquals(3, c.prepareSec)
+        assertEquals(5, c.stagePrepareSec)
         val gentle = c.stages.getValue(Mode.GENTLE)
         assertEquals(1, gentle.size)
         assertEquals("温和发力", gentle[0].name)
-        assertEquals(listOf("左手", "右手"), gentle[0].dirs)
+        assertEquals(listOf("右手", "左手"), gentle[0].dirs)
         assertEquals(8, gentle[0].contractSec)
         assertEquals(5, gentle[0].relaxSec)
         assertEquals(4, gentle[0].groups)
@@ -46,6 +47,8 @@ class TimingConfigTest {
         Config.configure(json)
         try {
             assertEquals(5, Config.prepareSec)
+            // "stagePrepareSec" is absent in this JSON: falls back to the default
+            assertEquals(5, Config.stagePrepareSec)
             assertEquals(4, Config.stagesOf(Mode.GENTLE)[0].groups)
             assertEquals(20, Config.stagesOf(Mode.ISOMETRIC)[0].contractSec)
         } finally {
@@ -91,6 +94,7 @@ class TimingConfigTest {
     fun `toJson round-trips an edited config`() {
         val edited = TimingConfig(
             prepareSec = 7,
+            stagePrepareSec = 8,
             stages = mapOf(
                 Mode.GENTLE to listOf(
                     ExerciseStage("温和发力", listOf("左手", "右手"), contractSec = 12, relaxSec = 9, groups = 6)),
