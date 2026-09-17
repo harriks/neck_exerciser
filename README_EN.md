@@ -10,11 +10,11 @@
 
 | Home | Workout |
 |:---:|:---:|
-| ![Home](screenshots/home.png) | ![Workout](screenshots/timer.png) |
+| ![Home](screenshots/home_en.png) | ![Workout](screenshots/timer_en.png) |
 
 | Check-in Calendar | Menu |
 |:---:|:---:|
-| ![Calendar](screenshots/calendar.png) | ![Menu](screenshots/menu.png) |
+| ![Calendar](screenshots/calendar_en.png) | ![Menu](screenshots/menu_en.png) |
 
 ## ✨ Features
 
