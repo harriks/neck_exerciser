@@ -11,9 +11,10 @@ package com.spineexercise.timer
 val DEFAULT_TIMING_JSON = """
 {
   "prepareSec": 3,
+  "stagePrepareSec": 5,
   "modes": {
     "gentle": [
-      { "name": "温和发力", "dirs": ["左手", "右手"], "contractSec": 8, "relaxSec": 5, "groups": 4 }
+      { "name": "温和发力", "dirs": ["右手", "左手"], "contractSec": 8, "relaxSec": 5, "groups": 4 }
     ],
     "isometric": [
       { "name": "正向抗阻", "dirs": ["右手", "左手"], "contractSec": 15, "relaxSec": 15, "groups": 3 },
@@ -29,9 +30,14 @@ val DEFAULT_TIMING_JSON = """
  */
 data class TimingConfig(
     val prepareSec: Int,
+    // Seconds to get ready between workout stages (stage switch); 0 disables it.
+    val stagePrepareSec: Int = DEFAULT_STAGE_PREPARE_SEC,
     val stages: Map<Mode, List<ExerciseStage>>,
 ) {
     companion object {
+        /** Fallback for legacy saved configs that predate "stagePrepareSec". */
+        const val DEFAULT_STAGE_PREPARE_SEC = 5
+
         /** Load from the default embedded JSON (used when the app starts / tests). */
         fun default(): TimingConfig = fromJson(DEFAULT_TIMING_JSON)
 
@@ -43,12 +49,15 @@ data class TimingConfig(
         fun fromJson(json: String): TimingConfig {
             val p = JsonParser(json.trim()).root() as JObj
             val prepareSec = (p.get("prepareSec") as JNum).value.toInt()
+            // Optional in legacy saved configs: fall back to the default.
+            val stagePrepare = (p.get("stagePrepareSec") as? JNum)?.value?.toInt()
+                ?: DEFAULT_STAGE_PREPARE_SEC
             val modes = p.get("modes") as JObj
             val stages = mapOf(
                 Mode.GENTLE to parseStages(modes.get("gentle") as JArr),
                 Mode.ISOMETRIC to parseStages(modes.get("isometric") as JArr),
             )
-            return TimingConfig(prepareSec = prepareSec, stages = stages)
+            return TimingConfig(prepareSec = prepareSec, stagePrepareSec = stagePrepare, stages = stages)
         }
 
         private fun parseStages(arr: JArr): List<ExerciseStage> =
@@ -79,6 +88,7 @@ data class TimingConfig(
         return """
 {
   "prepareSec": $prepareSec,
+  "stagePrepareSec": $stagePrepareSec,
   "modes": {
     "gentle": [
       $gentle

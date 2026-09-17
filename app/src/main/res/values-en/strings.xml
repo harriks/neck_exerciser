@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- English launcher name. Default values/ keeps the Chinese source name,
+     matching the in-app default language (L10n defaults to ZH). -->
+<resources>
+    <string name="app_name">Neck Exercise</string>
+</resources>

@@ -26,30 +26,45 @@ data class TimerState(
     val totalGroupsAll: Int = 0,
     val stageCount: Int = 0,
     val completedGroups: Int = 0, // pre-computed: groups fully completed before current
+    // Actual duration the relax phase runs at (== relaxSec, except the stage-
+    // switch carved relax which is shorter — see beginRelax). UI reads this for
+    // the ring denominator instead of the configured relaxSec.
+    val relaxTotalSec: Int = 0,
 ) {
-    val phaseText: String get() = when (phase) {
-        Phase.IDLE -> "准备就绪"
-        Phase.PREPARE -> "⏳ 准备"
-        Phase.CONTRACT -> "💪 $stageName" // gentle's single stage is 温和发力
-        Phase.RELAX -> "🍃 放松"
-        Phase.DONE -> "🎉 完成"
+    // Display fields resolve through L10n at read time, so a language switch
+    // (⋮ → Language) applies on the next recomposition without state changes.
+    val phaseText: String get() {
+        val s = L10n.s
+        return when (phase) {
+            Phase.IDLE -> s.ready
+            Phase.PREPARE -> s.prepare
+            Phase.CONTRACT -> s.contractText(L10n.stage(stageName)) // gentle's single stage is 温和发力
+            Phase.RELAX -> s.relaxText
+            Phase.DONE -> s.done
+        }
     }
 
-    val phaseLabel: String get() = when (phase) {
-        Phase.IDLE -> "等待中"
-        Phase.PREPARE -> "倒计时"
-        Phase.CONTRACT -> "${handName}发力中"
-        Phase.RELAX -> "放松中"
-        Phase.DONE -> "已完成"
+    val phaseLabel: String get() {
+        val s = L10n.s
+        return when (phase) {
+            Phase.IDLE -> s.waiting
+            Phase.PREPARE -> s.countdown
+            Phase.CONTRACT -> s.contractLabel(L10n.dir(handName))
+            Phase.RELAX -> s.relaxing
+            Phase.DONE -> s.complete
+        }
     }
 
-    val phaseHint: String get() = when (phase) {
-        Phase.IDLE -> "点击「开始」按钮，跟随节奏锻炼颈椎"
-        Phase.PREPARE -> "请就位，倒计时结束后开始发力"
-        Phase.CONTRACT -> if (mode == Mode.ISOMETRIC) "保持稳定，均匀呼吸，切勿憋气"
-            else "20%~30% 轻微力量，${handName}支撑"
-        Phase.RELAX -> "彻底松开，让肌肉休息"
-        Phase.DONE -> "做得好！请缓慢起身，避免突然动作"
+    val phaseHint: String get() {
+        val s = L10n.s
+        return when (phase) {
+            Phase.IDLE -> s.idleHint
+            Phase.PREPARE -> if (si > 0) s.nextStageHint(L10n.stage(stageName)) else s.prepareHint
+            Phase.CONTRACT -> if (mode == Mode.ISOMETRIC) s.isoContractHint
+                else s.gentleContractHint(L10n.dir(handName))
+            Phase.RELAX -> s.relaxHint
+            Phase.DONE -> s.doneHint
+        }
     }
 
     val elapsedText: String get() {
@@ -76,6 +91,7 @@ internal fun buildState(mode: Mode, si: Int = 0, di: Int = 0, gi: Int = 0,
         totalGroupsAll = Config.totalGroups(mode),
         stageCount = Config.stagesOf(mode).size,
         completedGroups = Config.completedGroups(mode, si, gi),
+        relaxTotalSec = st.relaxSec,
     )
 }
 
@@ -119,12 +135,14 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
     private var phaseEndMs = 0L       // absolute end of current phase
     private var accumulatedMs = 0L    // active time accumulated before current segment
     private var segmentStartMs = 0L   // start of current active segment (pause-aware)
+    private var pausedAtMs = 0L       // wall time when the current pause began
 
     fun setMode(mode: Mode) {
         _state = buildState(mode)
         phaseEndMs = 0L
         accumulatedMs = 0L
         segmentStartMs = 0L
+        pausedAtMs = 0L
     }
 
     fun start() {
@@ -136,8 +154,8 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         _state = buildState(s.mode, phase = Phase.PREPARE, countdown = Config.prepareSec, running = true)
         phaseEndMs = now + Config.prepareSec * 1000L
         pendingEvents += EngineEvent.Speak(
-            if (s.mode == Mode.ISOMETRIC) "${stageTalk(Config.stageOf(s.mode, 0))}开始"
-            else "开始，准备"
+            if (s.mode == Mode.ISOMETRIC) L10n.s.stageStart(L10n.talk(Config.stageOf(s.mode, 0).name))
+            else L10n.s.startGentle
         )
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.START)
     }
@@ -147,10 +165,16 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         val s = _state
         if (!s.running || s.paused == paused) return
         if (paused) {
-            accumulatedMs += nowMs() - segmentStartMs
+            pausedAtMs = nowMs()
+            accumulatedMs += pausedAtMs - segmentStartMs
             _state = s.copy(paused = true)
         } else {
-            segmentStartMs = nowMs()
+            val now = nowMs()
+            // Shift the phase end by the pause length: a pause must never
+            // consume the remaining phase time (resuming after a long pause
+            // would otherwise skip straight past the phase boundary).
+            phaseEndMs += now - pausedAtMs
+            segmentStartMs = now
             _state = s.copy(paused = false)
         }
     }
@@ -159,7 +183,7 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         val s = _state
         if (!s.running) return
         setPaused(!s.paused)
-        pendingEvents += EngineEvent.Speak(if (_state.paused) "已暂停" else "继续锻炼")
+        pendingEvents += EngineEvent.Speak(if (_state.paused) L10n.s.pausedCue else L10n.s.resumeCue)
     }
 
     fun reset(announce: Boolean = false) {
@@ -167,7 +191,8 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         phaseEndMs = 0L
         accumulatedMs = 0L
         segmentStartMs = 0L
-        if (announce) pendingEvents += EngineEvent.Speak("重置")
+        pausedAtMs = 0L
+        if (announce) pendingEvents += EngineEvent.Speak(L10n.s.resetCue)
     }
 
     /** Advance the machine to the current instant. Safe to call at any rate. */
@@ -213,29 +238,47 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         return (active / 1000).toInt()
     }
 
-        private fun advancePhase(now: Long) {
+    private fun advancePhase(now: Long) {
         val s = _state
         when (s.phase) {
             Phase.PREPARE -> beginContract(now, s)
             Phase.CONTRACT -> {
                 if (s.relaxSec <= 0) advanceAndContinue(now)
-                else beginPhase(now, Phase.RELAX, s.relaxSec)
+                else beginRelax(now, s)
             }
             Phase.RELAX -> advanceAndContinue(now)
             else -> { phaseEndMs = Long.MAX_VALUE }
         }
     }
 
-    private fun beginPhase(now: Long, p: Phase, sec: Int) {
-        _state = _state.copy(phase = p, countdown = sec)
-        phaseEndMs = now + sec * 1000L
-        if (p == Phase.RELAX) pendingEvents += EngineEvent.Speak("放松")
+    /**
+     * Enter RELAX. When the next rep would switch stages, the stage-switch
+     * prepare window is carved out of this (last) relax — its announcement and
+     * yellow countdown then play during what used to be the tail of the rest
+     * period, so the pause between stages stays exactly the configured
+     * relaxSec and no extra waiting is added.
+     */
+    private fun beginRelax(now: Long, s: TimerState) {
+        val switchAhead = advanceGroup(s).let { it.hasMore && it.si != s.si }
+        val total = if (switchAhead && Config.stagePrepareSec > 0)
+            (s.relaxSec - Config.stagePrepareSec).coerceAtLeast(0)
+        else s.relaxSec
+        if (total <= 0) { advanceAndContinue(now); return } // relax fully converted to prepare
+        _state = s.copy(phase = Phase.RELAX, countdown = total, relaxTotalSec = total)
+        phaseEndMs = now + total * 1000L
+        pendingEvents += EngineEvent.Speak(L10n.s.relaxCue)
     }
 
     private fun beginContract(now: Long, s: TimerState) {
         _state = s.copy(phase = Phase.CONTRACT, countdown = s.contractSec)
         phaseEndMs = now + s.contractSec * 1000L
-        pendingEvents += EngineEvent.Speak("请换${s.handName}发力")
+        // si > 0 means this PREPARE was a stage-switch one (start() is the only
+        // other PREPARE entry and always at si = 0): announce the stage start
+        // instead of the hand cue (also avoids "请换弹力带发力").
+        pendingEvents += if (s.si > 0)
+            EngineEvent.Speak(L10n.s.stageStart(L10n.talk(Config.stageOf(s.mode, s.si).name)))
+        else
+            EngineEvent.Speak(L10n.s.changeHand(L10n.dir(s.handName)))
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.SWITCH)
     }
 
@@ -250,6 +293,21 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         val (newGi, newDi, newSi, hasMore) = advanceGroup(s)
         if (!hasMore) { finish(elapsedSec, newRep); return }
         val st = Config.stageOf(s.mode, newSi)
+        // Stage switch: give the user time to change position before the new
+        // stage starts contracting. The prepare window is carved out of the
+        // relax that just ended (see beginRelax), so cap it to that relax time
+        // and never add extra waiting (stagePrepareSec = 0 keeps the direct path).
+        val prep = if (s.relaxSec > 0) minOf(Config.stagePrepareSec, s.relaxSec)
+                   else Config.stagePrepareSec
+        if (newSi != s.si && prep > 0) {
+            _state = buildState(s.mode, newSi, newDi, newGi, newRep,
+                countdown = prep, phase = Phase.PREPARE, running = true,
+                elapsed = elapsedSec)
+            phaseEndMs = now + prep * 1000L
+            pendingEvents += EngineEvent.Speak(L10n.s.stageGetReady(L10n.talk(st.name)))
+            pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.SWITCH)
+            return
+        }
         _state = buildState(s.mode, newSi, newDi, newGi, newRep,
             countdown = st.contractSec, phase = Phase.CONTRACT, running = true,
             elapsed = elapsedSec)
@@ -257,22 +315,18 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
         // Stage transition announcement (merged into one utterance: TTS flushes queue).
         // Uniform concise cue: only the next stage's "开始" (no end/hand hints).
         if (newSi != s.si) {
-            pendingEvents += EngineEvent.Speak("${stageTalk(st)}开始")
+            pendingEvents += EngineEvent.Speak(L10n.s.stageStart(L10n.talk(st.name)))
         } else if (st.dirs.size > 1) {
             // 多方向阶段内换手提示（舒缓单阶段也走这里：逐轮换手）
-            pendingEvents += EngineEvent.Speak("请换${st.dirs[newDi]}发力")
+            pendingEvents += EngineEvent.Speak(L10n.s.changeHand(L10n.dir(st.dirs[newDi])))
         } else {
             // 单方向阶段（弹力带）：放松结束后提示继续
-            pendingEvents += EngineEvent.Speak("继续训练")
+            pendingEvents += EngineEvent.Speak(L10n.s.continueCue)
         }
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.SWITCH)
     }
 
     private data class AdvanceResult(val gi: Int, val di: Int, val si: Int, val hasMore: Boolean)
-
-    // Announcement name: ensure the "训练" suffix appears exactly once.
-    private fun stageTalk(st: ExerciseStage): String =
-        if (st.name.endsWith("训练")) st.name else "${st.name}训练"
 
     private fun advanceGroup(s: TimerState): AdvanceResult {
         var gi = s.gi + 1
@@ -300,7 +354,7 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
             countdown = 0, elapsed = elapsedSec,
         )
         phaseEndMs = Long.MAX_VALUE
-        pendingEvents += EngineEvent.Speak("恭喜，全部完成，做得好")
+        pendingEvents += EngineEvent.Speak(L10n.s.finishCue)
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.DONE)
     }
 }

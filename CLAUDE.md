@@ -9,6 +9,7 @@
 | Web 入口 | `spine_exercise_timer.html`（单文件，浏览器直接打开） |
 | Android 入口 | `android/SpineExerciseTimer/`（Jetpack Compose + Kotlin） |
 | 外部依赖 | 无（Web Audio API / SpeechSynthesis API / Android ToneGenerator / TTS） |
+| 界面语言 | Android：中/英双语（跟随系统 + ⋮ 菜单「语言」手动切换，选择持久化）；Web：中文 |
 
 ## 2. 项目结构
 
@@ -26,7 +27,8 @@
     └── app/src/main/
         ├── AndroidManifest.xml
         ├── res/
-        │   ├── values/strings.xml
+        │   ├── values/strings.xml           # 应用名（中文，默认回退）
+        │   ├── values-en/strings.xml        # 应用名（英文，系统语言为英文时）
         │   ├── values/colors.xml
         │   ├── values/ic_launcher_background.xml
         │   ├── drawable/ic_launcher_foreground.xml
@@ -42,6 +44,8 @@
             ├── ReminderPolicy.kt  # 提醒决策纯函数（shouldNotify / nextTriggerAt，可单测）
             ├── ReminderScheduler.kt  # 闹钟调度 + 通知渠道（Android 胶水）
             ├── ReminderReceiver.kt / BootReceiver.kt  # 通知发送 / 开机重排
+            ├── L10n.kt            # 中英双语字符串包（Lang + Strings 两套实现 + 阶段/方向名映射，纯 Kotlin）
+            ├── L10nStore.kt       # 语言选择持久化（SharedPreferences "spine_l10n"：auto/zh/en）+ 系统语言探测
             ├── Colors.kt          # 阶段颜色
 ## 3. 时长配置（JSON）
 
@@ -56,7 +60,9 @@
   （file:// 双击打开无法 fetch 外部 JSON，故内嵌；`STAGES`/`PREPARE_SEC` 由它派生）。
 
 JSON 结构（三处保持一致，见项目根 `CLAUDE.md` 第 3 节）：
-`prepareSec`（准备倒计时）、`modes.{gentle,isometric}[]` 的
+`prepareSec`（准备倒计时）、`stagePrepareSec`（等长抗阻阶段切换前准备倒计时，默认 5 秒、设 0 关闭；
+仅 Android 实现阶段间准备，Web 版暂无；旧版保存的 JSON 缺此字段时回退默认值）、
+`modes.{gentle,isometric}[]` 的
 `name`（播报名）、`dirs[]`（方向）、`contractSec`（发力）、`relaxSec`（放松）、`groups`（每方向组数）。
 修改后需重新构建 APK（Android）或刷新浏览器（Web）。
 
@@ -100,19 +106,25 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
                                     ↑                      |
                                     |   [还有下一组]        |
                                     +──────────────────────+
+
+等长抗阻阶段切换（正向抗阻→侧向抗阻→弹力带）：
+最后一组放松缩短为 relaxSec−stagePrepareSec ──> prepare(划出的 5s) ──> contract(新阶段)
+（准备期从放松时长中划出，阶段间总休息 = relaxSec 不变）
 ```
 
 | phase | 含义 | 圆环颜色 | 动画 |
 |-------|------|----------|------|
 | `idle` | 空闲等待 | 灰色 `#607d8b` | 无 |
-| `prepare` | 准备倒计时 3 秒 | 黄色 `#ffca28` | 无 |
+| `prepare` | 准备倒计时（开局 3 秒；等长抗阻阶段切换 `stagePrepareSec` 默认 5 秒） | 黄色 `#ffca28` | 无 |
 | `contract` | 发力中 | 橙色 `#ff7043` | 脉冲缩放 |
 | `relax` | 放松中 | 蓝色 `#4fc3f7` | 呼吸透明度 |
 | `done` | 锻炼完成 | 绿色 `#9ccc65` | 无 |
 
 ### 4.3 计时规则
 
-- 仅首轮包含 prepare 阶段（3 秒倒计时）
+- 开局包含 prepare 阶段（3 秒倒计时）；等长抗阻阶段切换前有
+  `stagePrepareSec` 秒准备倒计时（默认 5 秒，设 0 关闭），从阶段间最后一组放松中划出
+  （放松不足时整段转为准备期并按放松时长封顶），阶段间总休息时长不变
 - relax 结束后 repCount++，判断是否完成
 - 等长抗阻模式 relax 为 0 时跳过 relax 直接进入下一组
 - 每秒 tick，倒计时归零时切换阶段
@@ -129,9 +141,9 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 | 暂停 | "已暂停" | togglePause |
 | 完成 | "完成，做得好"（等长抗阻："恭喜，全部完成，做得好"） | finishWorkout |
 
-**等长抗阻阶段切换播报**（合并为一条语音，因 TTS 会清空队列）：
-- 进入第 2 阶段首个发力：`侧向抗阻训练开始`
-- 进入第 3 阶段（弹力带）：`弹力带训练开始`
+**等长抗阻阶段切换播报**（两段式；TTS 每次播报清空队列，先后不冲突）：
+- 阶段切换准备期开始（从放松中划出的 `stagePrepareSec` 秒黄色倒计时）：`侧向抗阻训练，请准备` / `弹力带训练，请准备`
+- 准备期结束、新阶段首个发力：`侧向抗阻训练开始` / `弹力带训练开始`
 - 弹力带阶段内后续组播报「继续训练」，并保留切换提示音
 - 阶段名已含“训练”时不再重复拼接（“弹力带训练”→“弹力带训练开始”）
 
@@ -162,6 +174,8 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 #### 模式选择页
 - 🦴 图标 + 标题「颈椎锻炼」
 - 两个模式卡片：舒缓锻炼 / 等长抗阻
+- 卡片块（模式卡 + 打卡日历行）在标题与页脚提示之间**垂直居中**（上下等重 Spacer(weight(1f))，
+  避免内容堆积在屏幕上半部）
 
 #### 计时页面
 - **顶部**：右上角 ⋮ 菜单（打卡日历 / 锻炼要点 / 关于[含版本号]，弹出动效+遮罩）
@@ -238,8 +252,13 @@ paused: 是否暂停
 
 - **WorkoutEngine.kt**：纯 Kotlin 状态机（无 Android 依赖）
   - 锚点计时：每个阶段记录绝对结束时间戳，倒计时/总用时零漂移
+  - 暂停语义：`phaseEndMs` 按暂停时长平移——恢复不跳阶段，elapsed 不计暂停时间
   - 事件输出：语音/音效以 `EngineEvent`（Speak/Sfx）形式发出，由 ViewModel 播放
   - 推进统一走 `advanceGroup()`：舒缓=单阶段配置，与等长抗阻共用同一路径，零模式分支
+  - 阶段切换（等长抗阻）：准备期从最后一组放松中划出（`beginRelax` 缩短 relax 并在
+    TimerState 暴露 `relaxTotalSec` 实际时长；`advanceAndContinue` 按
+    min(stagePrepareSec, relaxSec) 封顶），阶段间总休息不变；准备期播「X，请准备」，
+    发力时 `beginContract` 按 si>0 播「X训练开始」（弹力带阶段无换手提示）
   - `TimerState` + `buildState()` 工厂也在此文件；`completedGroups` 已预计算
 - **TimerViewModel.kt**：只负责桥接 —— 200ms tick 驱动 engine，将事件转为
   ToneGenerator/TTS 调用；时钟用 `SystemClock.elapsedRealtime()`（单调时钟）
@@ -249,14 +268,20 @@ paused: 是否暂停
 - **Colors.kt**：`PhaseColors` 从 Model.kt 迁出，Model 保持纯 Kotlin 可单测
 - **MainActivity.kt**：`rememberSaveable` 保存所选模式；旋转屏幕不再重置锻炼
   （`LaunchedEffect(mode)` 仅在模式变化时 setMode；返回按钮负责 reset）
-- **计时设置**：计时页 ⋮ 菜单「计时设置」运行时编辑时长/组数（`TimingConfig.toJson()` 序列化 +
-  `TimingStore` 持久化，启动时优先于内嵌 JSON；保存热生效并重置进行中锻炼）
+- **计时设置**：计时页 ⋮ 菜单「计时设置」运行时编辑时长/组数（含「阶段切换准备（秒）」步进器 1~15，
+  `TimingConfig.toJson()` 序列化 + `TimingStore` 持久化，启动时优先于内嵌 JSON；保存热生效并重置进行中锻炼）
 - **屏幕常亮**：锻炼运行期间 `FLAG_KEEP_SCREEN_ON` 保持屏幕唤醒，结束/离开计时页自动清除
-- **打卡日历**：`CheckIn.kt` 纯 Kotlin 打卡日志（TreeSet 去重 + 紧凑 `v1:base36` 序列化）；
-  持久化经 `CheckInStore.kt`（SharedPreferences `"spine_checkins"`，单一数据源，
-  `AppNavigation` 写穿保存——冷启动/划掉任务后历史不丢）；完成锻炼进 `Phase.DONE` 时当天打卡
-  （`CheckInLog` 按天去重防双计）；首页/计时页「📅」进入 `CalendarScreen`
-  （月历视图 + 🔥 连续/最长 streak + 里程碑徽章行 7🥉/30🥈/100🥇/365👑）
+- **打卡日历**：`CheckIn.kt` 纯 Kotlin 打卡日志（TreeSet 去重 + 紧凑 `v2:base36` 序列化，
+  每天 token 为 `<day>` 或 `<day>.<模式掩码>`（1=舒缓 2=等长抗阻；v1 旧数据无掩码=模式未知，
+  兼容解析，仅计入天数统计）；持久化经 `CheckInStore.kt`（SharedPreferences `"spine_checkins"`，
+  单一数据源，`AppNavigation` 写穿保存——冷启动/划掉任务后历史不丢）；
+  完成锻炼进 `Phase.DONE` 时按 天+模式 打卡（`CheckInLog` 按天去重防双计，
+  同日另一模式合并位掩码）；首页/计时页「📅」进入 `CalendarScreen`
+  （月历视图 + 🔥 连续/最长 streak + 按模式计数（舒缓/等长抗阻 · 本月联动翻页 + · 累计总量）+
+  打卡格模式小圆点（青=舒缓/橙=等长抗阻，双 done 双点，旧数据无点）+
+  里程碑徽章行 7🥉/30🥈/100🥇/365👑）
+- **返回确认**：训练进行中（含暂停）按系统返回先弹确认框（「重置并返回/继续锻炼」），
+  防止误触丢弃进度；空闲/完成态直接返回
 - **每日提醒**：`ReminderPolicy.kt` 纯函数（`shouldNotify` 当天已打卡则跳过；
   `nextTriggerAt` 已过时刻滚动到明天）+ `ReminderScheduler.kt`
   （`setAlarmClock` 精确闹钟 + `USE_EXACT_ALARM` 权限，穿 Doze；触发后由
@@ -266,8 +291,16 @@ paused: 是否暂停
   MainActivity onCreate 兼容性重排（升级迁移）；
   设置入口在日历页底部（Switch + TimePickerDialog；API 33+ 运行时请求 POST_NOTIFICATIONS，
   拒绝则开关回退并提示）；状态栏会显示系统闹钟图标（setAlarmClock 语义，提醒已设定）
-- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `CheckInLogTest.kt` +
-  `ReminderPolicyTest.kt`（JUnit4，共 44 例）
+- **中英双语**：`L10n.kt`（纯 Kotlin，可单测）持有 `Strings` 中/英两套文案
+  （UI/弹窗/引擎播报/锻炼要点/通知/无障碍描述），`L10n.lang` 默认 ZH；
+  阶段名与方向名来自规范中文配置 JSON，显示/播报时经 `L10n.stage()/dir()/talk()` 查表本地化
+  （未知名原样透传）。`L10nStore`（SharedPreferences `"spine_l10n"`：auto/zh/en）在
+  MainActivity onCreate 与 `ReminderReceiver`（冷进程）时应用「跟随系统或手动覆盖」；
+  ⋮ 菜单「语言」弹窗（跟随系统/中文/English）保存后 `langKey++` 触发整树重组；
+  TTS 经 `L10n.ttsLocale`（zh-CN / en-US）在 `speakInternal` 惰性重绑；
+  引擎播报文案在事件产生时读当前语言，切换后即时生效。Model.tips 已并入 Strings
+- **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `TimingConfigTest.kt` +
+  `CheckInLogTest.kt` + `ReminderPolicyTest.kt` + `L10nTest.kt`（JUnit4，共 63 例）
 
 ## 7. 已知限制
 

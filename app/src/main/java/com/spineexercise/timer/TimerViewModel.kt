@@ -1,4 +1,4 @@
-﻿package com.spineexercise.timer
+package com.spineexercise.timer
 
 import android.app.Application
 import android.media.AudioManager
@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.speech.tts.TextToSpeech
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -14,7 +15,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.Locale
 
 // ===================== ViewModel =====================
 // The state machine lives in WorkoutEngine (pure Kotlin, unit-testable).
@@ -31,14 +31,25 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
 
     private var tickJob: Job? = null
     private var tts: TextToSpeech? = null
-    private var toneGen: ToneGenerator? = null
+    @Volatile private var toneGen: ToneGenerator? = null
+    @Volatile private var cleared = false
     private var ttsReady = false
+    private var ttsLang: Lang? = null
 
     init {
-        toneGen = try { ToneGenerator(AudioManager.STREAM_MUSIC, 80) } catch (e: Exception) { null }
+        // ToneGenerator opens an audio track in its constructor (tens of ms on
+        // some devices) which would stall the first frame when built on the
+        // main thread here. Build it off-main instead; sfx calls simply skip
+        // while it is not ready yet (the first one happens on start, well after).
+        viewModelScope.launch(Dispatchers.Default) {
+            val gen = try { ToneGenerator(AudioManager.STREAM_MUSIC, 80) } catch (e: Exception) { null }
+            if (cleared) { gen?.release(); return@launch }
+            toneGen = gen
+            // Re-check after assigning so onCleared can never race a leak
+            if (cleared) { toneGen = null; gen?.release() }
+        }
         tts = TextToSpeech(app) { status ->
             if (status == TextToSpeech.SUCCESS) {
-                tts?.language = Locale.CHINESE
                 tts?.setSpeechRate(1.1f)
                 ttsReady = true
             }
@@ -46,6 +57,7 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        cleared = true
         super.onCleared()
         tickJob?.cancel()
         tts?.stop(); tts?.shutdown()
@@ -139,6 +151,12 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun speakInternal(text: String) {
         if (!ttsReady) return
+        // Keep the TTS voice in step with the app language (⋮ → Language);
+        // the check is cheap and only rebinds after an actual change.
+        if (ttsLang != L10n.lang) {
+            tts?.language = L10n.ttsLocale
+            ttsLang = L10n.lang
+        }
         tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "tts_${System.currentTimeMillis()}")
     }
 }

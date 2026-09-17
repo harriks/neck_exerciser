@@ -68,6 +68,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // Resolve the app language (in-app override or system locale) before
+        // any composable or announcement reads L10n.
+        L10nStore.init(this)
         // Apply the user's saved timing override (⋮ → 计时设置) before anything
         // reads Config (engine state is built lazily after setContent).
         TimingStore.load(this).takeIf { it.isNotBlank() }?.let { json ->
@@ -150,7 +153,11 @@ fun AppNavigation() {
     val context = LocalContext.current
     var checkinsRaw by remember { mutableStateOf(CheckInStore.load(context)) }
     var showCalendar by remember { mutableStateOf(false) }
+    // Bumped after an in-app language switch so the whole tree re-reads L10n
+    // (plain object property reads are not Compose state).
+    var langKey by remember { mutableIntStateOf(0) }
 
+    key(langKey) {
     if (showCalendar) {
         CalendarScreen(
             raw = checkinsRaw,
@@ -173,7 +180,9 @@ fun AppNavigation() {
                 checkinsRaw = raw
                 CheckInStore.save(context, raw) // write-through: survives relaunch
             },
+            onLanguageChanged = { langKey++ },
         )
+    }
     }
 }
 
@@ -182,43 +191,48 @@ fun AppNavigation() {
 @Composable
 fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit,
                      streakDays: Int, totalDays: Int) {
-    // One fade for the whole screen (cheap); cards keep their press-scale feel.
+    val s = L10n.s
     FadeIn {
         Column(
             modifier = Modifier.fillMaxSize().background(BgBrush)
-                .statusBarsPadding().padding(horizontal = 24.dp),
+                .statusBarsPadding().padding(horizontal = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Spacer(Modifier.weight(0.26f))
+            Spacer(Modifier.height(48.dp))
 
             // Compact header: icon chip + title inline
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
-                    modifier = Modifier.size(48.dp)
-                        .background(AccentCyan.copy(alpha = 0.12f), RoundedCornerShape(24.dp)),
+                    modifier = Modifier.size(52.dp)
+                        .background(AccentCyan.copy(alpha = 0.12f), RoundedCornerShape(26.dp)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text("🦴", fontSize = 26.sp)
+                    Text("🦴", fontSize = 28.sp)
                 }
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(14.dp))
                 Column {
-                    Text("颈椎锻炼", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
-                    Text("温和的颈椎锻炼计时器", fontSize = 11.sp, color = MutedColor)
+                    Text(s.appName, fontSize = 24.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                    Text(s.appSubtitle, fontSize = 12.sp, color = MutedColor)
                 }
             }
 
-            Spacer(Modifier.weight(0.34f))
+            // Balanced distribution: equal weights above and below let the card
+            // block float centered between the header and the footer hint, so
+            // tall screens don't clump everything into the top half.
+            Spacer(Modifier.weight(1f))
 
-            // Primary actions: the two workouts, side by side
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.fillMaxWidth()) {
-                ModeCard("💪", "舒缓锻炼", "8s 发力 · 5s 放松\n左右交替 8 轮",
-                    AccentCyan, Modifier.weight(1f)) { onSelect(Mode.GENTLE) }
-                ModeCard("🔒", "等长抗阻", "3 阶段 · 15 组\n静态持续发力",
-                    AccentOrange, Modifier.weight(1f)) { onSelect(Mode.ISOMETRIC) }
-            }
+            // Primary actions: the two workouts as full-width horizontal rows
+            // (icon chip + title + duration + desc + chevron), stacked like a
+            // menu list.
+            ModeRow("💪", s.modeGentle, s.modeGentleDesc,
+                AccentCyan, durationText(Mode.GENTLE)) { onSelect(Mode.GENTLE) }
 
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(14.dp))
+
+            ModeRow("🔒", s.modeIso, s.modeIsoDesc,
+                AccentOrange, durationText(Mode.ISOMETRIC)) { onSelect(Mode.ISOMETRIC) }
+
+            Spacer(Modifier.height(14.dp))
 
             // Secondary: compact calendar row with live streak data
             Button(
@@ -226,50 +240,84 @@ fun ModeSelectScreen(onSelect: (Mode) -> Unit, onOpenCalendar: () -> Unit,
                 modifier = Modifier.fillMaxWidth(),
                 shape = CardShape,
                 colors = ButtonDefaults.buttonColors(containerColor = DoneGreen.copy(alpha = 0.10f)),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             ) {
                 Text("📅", fontSize = 18.sp)
                 Spacer(Modifier.width(10.dp))
-                Text("打卡日历", fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DoneGreen)
+                Text(s.calendarBtn, fontSize = 15.sp, fontWeight = FontWeight.SemiBold, color = DoneGreen)
                 Spacer(Modifier.weight(1f))
                 Text(
-                    if (totalDays == 0) "完成锻炼自动打卡"
-                    else "🔥 连续 $streakDays 天 · 累计 $totalDays 天",
+                    if (totalDays == 0) s.calendarEmpty
+                    else s.streakSummary(streakDays, totalDays),
                     fontSize = 12.sp, color = HintColor,
                 )
             }
 
-            Spacer(Modifier.weight(0.4f))
+            Spacer(Modifier.weight(1f))
+
+            // Footer hint: anchors the bottom so the leftover space reads as
+            // intentional breathing room instead of a hole
+            Text(L10n.s.footerHint, fontSize = 12.sp, color = MutedColor)
+
+            Spacer(Modifier.height(28.dp))
         }
     }
 }
 
+/** Rough total-workout length for the mode-card readout (follows Config). */
+private fun durationText(mode: Mode): String {
+    val sec = Config.prepareSec + Config.stagesOf(mode)
+        .sumOf { st -> st.dirs.size * st.groups * (st.contractSec + st.relaxSec) }
+    return L10n.s.approxMinutes((sec + 30) / 60)
+}
+
 @Composable
-fun ModeCard(emoji: String, title: String, desc: String, color: Color,
-             modifier: Modifier = Modifier, onClick: () -> Unit) {
-    // Press feedback: card shrinks slightly while held (on top of the ripple)
+fun ModeRow(emoji: String, title: String, desc: String, color: Color,
+            duration: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    // Press feedback: the row shrinks slightly while held (on top of the ripple)
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        if (pressed) 0.97f else 1f,
+        if (pressed) 0.98f else 1f,
         animationSpec = spring(stiffness = Spring.StiffnessMedium),
-        label = "cardPress",
+        label = "rowPress",
     )
     Button(
         onClick = onClick,
-        modifier = modifier.graphicsLayer { scaleX = scale; scaleY = scale },
+        modifier = modifier.fillMaxWidth().graphicsLayer { scaleX = scale; scaleY = scale },
         interactionSource = interaction,
         shape = CardShape,
         colors = ButtonDefaults.buttonColors(containerColor = color.copy(alpha = 0.12f)),
-        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 16.dp),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 14.dp),
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-            Text(emoji, fontSize = 28.sp)
-            Spacer(Modifier.height(6.dp))
-            Text(title, fontSize = 17.sp, fontWeight = FontWeight.Bold, color = color)
-            Spacer(Modifier.height(4.dp))
-            Text(desc, fontSize = 11.sp, color = SubTextColor, textAlign = TextAlign.Center,
-                lineHeight = 15.sp)
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Box(
+                modifier = Modifier.size(46.dp)
+                    .background(color.copy(alpha = 0.14f), RoundedCornerShape(23.dp)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(emoji, fontSize = 23.sp)
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = color)
+                    Spacer(Modifier.width(8.dp))
+                    // Duration pill: live from the timing config, so it stays
+                    // honest after the user edits 计时设置
+                    Text(
+                        duration,
+                        fontSize = 10.sp, fontWeight = FontWeight.SemiBold,
+                        color = color.copy(alpha = 0.9f),
+                        modifier = Modifier.background(color.copy(alpha = 0.10f), RoundedCornerShape(50.dp))
+                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                    )
+                }
+                Spacer(Modifier.height(3.dp))
+                Text(desc, fontSize = 11.sp, color = SubTextColor, lineHeight = 15.sp)
+            }
+            Spacer(Modifier.width(8.dp))
+            Text("›", fontSize = 22.sp, color = HintColor)
         }
     }
 }
@@ -278,21 +326,49 @@ fun ModeCard(emoji: String, title: String, desc: String, color: Color,
 
 @Composable
 fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
-                onCheckIn: (String) -> Unit, vm: TimerViewModel = viewModel()) {
+                onCheckIn: (String) -> Unit, onLanguageChanged: () -> Unit = {},
+                vm: TimerViewModel = viewModel()) {
+    val s = L10n.s
+    val context = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
 
     var showCalendar by remember { mutableStateOf(false) }
     var showTips by remember { mutableStateOf(false) }
     var showAbout by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
+    var showLanguage by remember { mutableStateOf(false) }
     if (showCalendar) {
         // Calendar shown in-place so the ViewModel survives (no progress lost).
         CalendarScreen(raw = checkinsRaw, onBack = { showCalendar = false })
         return
     }
 
-    // System gesture/button back exits the workout (resets it first)
-    BackHandler { vm.resetWorkout(); onBack() }
+    // System gesture/button back exits the workout (resets it first).
+    // Mid-workout (running or paused) ask first — a stray back gesture should
+    // not silently discard the progress; idle/done exit directly.
+    var confirmBack by remember { mutableStateOf(false) }
+    BackHandler {
+        if (state.running) confirmBack = true
+        else { vm.resetWorkout(); onBack() }
+    }
+    if (confirmBack) {
+        AlertDialog(
+            onDismissRequest = { confirmBack = false },
+            confirmButton = {
+                TextButton(onClick = { confirmBack = false; vm.resetWorkout(); onBack() }) {
+                    Text(s.backResetExit, color = AccentOrange, fontWeight = FontWeight.SemiBold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmBack = false }) { Text(s.backStay, color = AccentCyan) }
+            },
+            title = { Text(s.backTitle, fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+            text = { Text(s.backBody,
+                fontSize = 13.sp, color = SubTextColor) },
+            containerColor = Color(0xFF2D3E50),
+            shape = TipShape,
+        )
+    }
 
     // Only switch mode when it actually changed; the ViewModel survives rotation,
     // so a running workout is not reset by configuration changes.
@@ -308,16 +384,16 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
         onDispose { activityWindow?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
     }
 
-    // Auto check-in: once per completed workout per DAY — guarded by the last
-    // recorded date, not a boolean, so finishing a workout just after midnight
-    // still records the new day (dedup by day also lives in CheckInLog).
-    var recordedOn by remember { mutableStateOf<LocalDate?>(null) }
+    // Auto check-in: once per completed workout per DAY+MODE — guarded by a key
+    // set, so finishing the other mode later the same day still records its bit
+    // and finishing just after midnight records the new day (day dedup also
+    // lives in CheckInLog).
+    val recordedKeys = remember { mutableSetOf<String>() }
     LaunchedEffect(state.phase) {
         val today = LocalDate.now()
-        if (state.phase == Phase.DONE && recordedOn != today) {
-            recordedOn = today
+        if (state.phase == Phase.DONE && recordedKeys.add("$today#${mode.name}")) {
             val log = CheckInLog.parse(checkinsRaw)
-            log.add(today)
+            log.add(today, mode)
             onCheckIn(log.serialize())
         }
     }
@@ -339,12 +415,18 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
                 onOpenCalendar = { showCalendar = true },
                 onOpenTips = { showTips = true },
                 onOpenSettings = { showSettings = true },
+                onOpenLanguage = { showLanguage = true },
                 onOpenAbout = { showAbout = true },
             )
         }
         TipsDialog(mode, showTips) { showTips = false }
         AboutDialog(showAbout) { showAbout = false }
         SettingsDialog(showSettings, onDismiss = { showSettings = false }, onApply = { vm.resetWorkout() })
+        LanguageDialog(showLanguage, onPick = { code ->
+            L10nStore.save(context, code)
+            L10nStore.init(context) // apply immediately
+            onLanguageChanged()     // then force a full recomposition
+        }, onDismiss = { showLanguage = false })
 
         Spacer(Modifier.height(8.dp))
 
@@ -390,9 +472,9 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
         Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically) {
             val btnText = when {
-                !state.running -> "开始"
-                state.paused -> "继续"
-                else -> "暂停"
+                !state.running -> s.start
+                state.paused -> s.resume
+                else -> s.pause
             }
             Button(
                 onClick = {
@@ -408,7 +490,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
             }
             OutlinedButton(
                 onClick = {
-                    vm.speak("重置")
+                    vm.speak(L10n.s.resetCue)
                     vm.resetWorkout()
                 },
                 modifier = Modifier.weight(1f).height(52.dp)
@@ -416,7 +498,7 @@ fun TimerScreen(mode: Mode, onBack: () -> Unit, checkinsRaw: String,
                 shape = BtnShape,
                 colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor),
             ) {
-                Text("重置", fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                Text(L10n.s.reset, fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
             }
         }
 
@@ -450,9 +532,12 @@ fun TimerRing(state: TimerState) {
         Phase.IDLE -> 0f
         else -> {
             val total = when (state.phase) {
-                Phase.PREPARE -> Config.prepareSec
+                // Stage-switch prepare (si > 0) is longer than the opening one;
+                // relax uses the actual run length (shortened when the stage-
+                // switch prepare was carved out of it).
+                Phase.PREPARE -> if (state.si > 0) Config.stagePrepareSec else Config.prepareSec
                 Phase.CONTRACT -> state.contractSec
-                Phase.RELAX -> state.relaxSec
+                Phase.RELAX -> state.relaxTotalSec
                 else -> 1
             }.coerceAtLeast(1)
             1f - state.countdown.toFloat() / total
@@ -537,12 +622,14 @@ fun StageProgress(state: TimerState) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             // Dynamic label: reflect the current phase instead of the static stage name
+            val s = L10n.s
             val label = when (state.phase) {
-                Phase.RELAX -> "🍃 放松"
-                Phase.CONTRACT -> if (state.mode == Mode.ISOMETRIC) "💪 ${state.stageName} · ${state.handName}"
-                    else "💪 ${state.handName}发力"
-                Phase.DONE -> "🎉 完成"
-                else -> "📍 ${state.stageName}"
+                Phase.RELAX -> s.relaxText
+                Phase.CONTRACT -> if (state.mode == Mode.ISOMETRIC)
+                    s.contractIsoProgress(L10n.stage(state.stageName), L10n.dir(state.handName))
+                    else s.contractGentleProgress(L10n.dir(state.handName))
+                Phase.DONE -> s.done
+                else -> s.stageProgress(L10n.stage(state.stageName))
             }
             Text("$label (${completed + 1}/$total)",
                 fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
@@ -573,7 +660,9 @@ fun StageProgress(state: TimerState) {
 /** Overflow menu anchored at the header's top-right corner (custom card + pop-in). */
 @Composable
 fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit,
-                     onOpenSettings: () -> Unit, onOpenAbout: () -> Unit) {
+                     onOpenSettings: () -> Unit, onOpenLanguage: () -> Unit,
+                     onOpenAbout: () -> Unit) {
+    val s = L10n.s
     var expanded by remember { mutableStateOf(false) }
     // Micro-interaction: the kebab rotates into a dash while the menu is open
     val rotation by animateFloatAsState(
@@ -583,7 +672,7 @@ fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit,
     )
     Box {
         IconButton(onClick = { expanded = true }, modifier = Modifier.size(32.dp)
-            .semantics { contentDescription = "菜单" }) {
+            .semantics { contentDescription = L10n.s.menuCd }) {
             Text("⋮", fontSize = 20.sp, color = ContentColor,
                 modifier = Modifier.alpha(0.85f).graphicsLayer { rotationZ = rotation })
         }
@@ -617,12 +706,13 @@ fun HeaderMenuButton(onOpenCalendar: () -> Unit, onOpenTips: () -> Unit,
                             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp),
                         ) {
                             Column(Modifier.width(200.dp).padding(vertical = 6.dp)) {
-                                MenuRow("📅", "打卡日历", DoneGreen, onClick = { expanded = false; onOpenCalendar() })
-                                MenuRow("📋", "锻炼要点", TipHeaderColor, onClick = { expanded = false; onOpenTips() })
-                                MenuRow("⚙️", "计时设置", AccentBlue, onClick = { expanded = false; onOpenSettings() })
+                                MenuRow("📅", s.menuCalendar, DoneGreen, onClick = { expanded = false; onOpenCalendar() })
+                                MenuRow("📋", s.menuTips, TipHeaderColor, onClick = { expanded = false; onOpenTips() })
+                                MenuRow("⚙️", s.menuSettings, AccentBlue, onClick = { expanded = false; onOpenSettings() })
+                                MenuRow("🌐", s.menuLanguage, AccentBtn, onClick = { expanded = false; onOpenLanguage() })
                                 Divider(color = Color.White.copy(alpha = 0.14f),
                                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp))
-                                MenuRow("ℹ️", "关于", AccentCyan, trailing = rememberAppVersionLabel(),
+                                MenuRow("ℹ️", s.menuAbout, AccentCyan, trailing = rememberAppVersionLabel(),
                                     onClick = { expanded = false; onOpenAbout() })
                             }
                         }
@@ -674,15 +764,16 @@ private fun rememberAppVersionLabel(): String {
 @Composable
 fun TipsDialog(mode: Mode, visible: Boolean, onDismiss: () -> Unit) {
     if (!visible) return
-    val tips = remember(mode) { Config.tips[mode] ?: emptyList() }
+    val s = L10n.s
+    val tips = remember(mode) { if (mode == Mode.GENTLE) s.gentleTips else s.isoTips }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("知道了", color = AccentCyan)
+                Text(s.gotIt, color = AccentCyan)
             }
         },
-        title = { Text("📋 锻炼要点", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        title = { Text(s.tipsTitle, fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
         text = {
             Column {
                 tips.forEach { tip ->
@@ -701,11 +792,13 @@ fun TipsDialog(mode: Mode, visible: Boolean, onDismiss: () -> Unit) {
 fun SettingsDialog(visible: Boolean, onDismiss: () -> Unit, onApply: () -> Unit) {
     if (!visible) return
     val context = LocalContext.current
+    val s = L10n.s
 
     // Snapshot of editable values: index 0 = gentle, 1..3 = isometric stages.
     // names/dirs stay fixed (they are the workout script, not tunable timing).
     data class StageEdit(val name: String, val contract: Int, val relax: Int, val groups: Int)
     var prepare by remember { mutableStateOf(Config.prepareSec) }
+    var stagePrepare by remember { mutableStateOf(Config.stagePrepareSec) }
     var stages by remember {
         mutableStateOf(
             (Config.stagesOf(Mode.GENTLE) + Config.stagesOf(Mode.ISOMETRIC))
@@ -725,6 +818,7 @@ fun SettingsDialog(visible: Boolean, onDismiss: () -> Unit, onApply: () -> Unit)
         }
         val json = TimingConfig(
             prepareSec = prepare,
+            stagePrepareSec = stagePrepare,
             stages = mapOf(Mode.GENTLE to gentle, Mode.ISOMETRIC to iso),
         ).toJson()
         Config.configure(json)
@@ -736,33 +830,34 @@ fun SettingsDialog(visible: Boolean, onDismiss: () -> Unit, onApply: () -> Unit)
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
-            TextButton(onClick = { save() }) { Text("保存", color = AccentCyan, fontWeight = FontWeight.SemiBold) }
+            TextButton(onClick = { save() }) { Text(s.save, color = AccentCyan, fontWeight = FontWeight.SemiBold) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("取消", color = HintColor) }
+            TextButton(onClick = onDismiss) { Text(s.cancel, color = HintColor) }
         },
-        title = { Text("⚙️ 计时设置", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        title = { Text(s.settingsTitle, fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
         text = {
             Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState())) {
-                StepperRow("准备倒计时（秒）", prepare, 1..10) { prepare = it }
-                SectionHeader("舒缓锻炼 · ${stages[0].name}")
-                StepperRow("发力（秒）", stages[0].contract, 3..60) { edit(0) { s -> s.copy(contract = it) } }
-                StepperRow("放松（秒）", stages[0].relax, 0..60) { edit(0) { s -> s.copy(relax = it) } }
-                StepperRow("组数（每方向）", stages[0].groups, 1..20) { edit(0) { s -> s.copy(groups = it) } }
+                StepperRow(s.settingPrepare, prepare, 1..10) { prepare = it }
+                StepperRow(s.settingStagePrepare, stagePrepare, 1..15) { stagePrepare = it }
+                SectionHeader(s.sectionGentle(L10n.stage(stages[0].name)))
+                StepperRow(s.settingContract, stages[0].contract, 3..60) { edit(0) { s -> s.copy(contract = it) } }
+                StepperRow(s.settingRelax, stages[0].relax, 0..60) { edit(0) { s -> s.copy(relax = it) } }
+                StepperRow(s.settingGroups, stages[0].groups, 1..20) { edit(0) { s -> s.copy(groups = it) } }
                 (1..3).forEach { i ->
-                    SectionHeader("等长抗阻 · ${stages[i].name}")
-                    StepperRow("发力（秒）", stages[i].contract, 3..60) { edit(i) { s -> s.copy(contract = it) } }
-                    StepperRow("放松（秒）", stages[i].relax, 0..60) { edit(i) { s -> s.copy(relax = it) } }
-                    StepperRow("组数（每方向）", stages[i].groups, 1..20) { edit(i) { s -> s.copy(groups = it) } }
+                    SectionHeader(s.sectionIso(L10n.stage(stages[i].name)))
+                    StepperRow(s.settingContract, stages[i].contract, 3..60) { edit(i) { s -> s.copy(contract = it) } }
+                    StepperRow(s.settingRelax, stages[i].relax, 0..60) { edit(i) { s -> s.copy(relax = it) } }
+                    StepperRow(s.settingGroups, stages[i].groups, 1..20) { edit(i) { s -> s.copy(groups = it) } }
                 }
                 Spacer(Modifier.height(8.dp))
-                Text("保存后对新开始的锻炼生效；进行中的锻炼会被重置。", fontSize = 11.sp, color = MutedColor)
+                Text(s.settingsHint, fontSize = 11.sp, color = MutedColor)
                 TextButton(onClick = {
                     Config.configure(DEFAULT_TIMING_JSON)
                     TimingStore.clear(context)
                     onApply()
                     onDismiss()
-                }) { Text("恢复默认", color = HintColor, fontSize = 13.sp) }
+                }) { Text(s.restoreDefaults, color = HintColor, fontSize = 13.sp) }
             }
         },
         containerColor = Color(0xFF2D3E50),
@@ -789,6 +884,42 @@ private fun StepperRow(label: String, value: Int, range: IntRange, onChange: (In
     }
 }
 
+/** In-app language picker: follow system / 中文 / English. Saved via L10nStore. */
+@Composable
+fun LanguageDialog(visible: Boolean, onPick: (String) -> Unit, onDismiss: () -> Unit) {
+    if (!visible) return
+    val context = LocalContext.current
+    val current = L10nStore.load(context) // re-read every open: cheap and always fresh
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text(L10n.s.cancel, color = HintColor) }
+        },
+        title = { Text("🌐 ${L10n.s.languageTitle}", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        text = {
+            Column {
+                LanguageOption(L10n.s.followSystem, current == L10nStore.AUTO) { onPick(L10nStore.AUTO) }
+                LanguageOption("中文 · Chinese", current == L10nStore.ZH) { onPick(L10nStore.ZH) }
+                LanguageOption("English · 英文", current == L10nStore.EN) { onPick(L10nStore.EN) }
+            }
+        },
+        containerColor = Color(0xFF2D3E50),
+        shape = TipShape,
+    )
+}
+
+@Composable
+private fun LanguageOption(label: String, selected: Boolean, onClick: () -> Unit) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 6.dp),
+    ) {
+        RadioButton(selected = selected, onClick = onClick)
+        Spacer(Modifier.width(6.dp))
+        Text(label, fontSize = 15.sp, color = ContentColor)
+    }
+}
+
 @Composable
 private fun StepButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
     Box(
@@ -806,35 +937,37 @@ private fun StepButton(glyph: String, enabled: Boolean, onClick: () -> Unit) {
 }
 
 /** About dialog with the app version from PackageManager. */
+@Suppress("DEPRECATION") // pi.versionCode is only read on the SDK < 28 branch
 @Composable
 fun AboutDialog(visible: Boolean, onDismiss: () -> Unit) {
     if (!visible) return
     val context = LocalContext.current
+    val s = L10n.s
     val versionText = remember {
         runCatching {
             val pi = context.packageManager.getPackageInfo(context.packageName, 0)
             val code = if (Build.VERSION.SDK_INT >= 28) pi.longVersionCode else pi.versionCode.toLong()
-            "版本 ${pi.versionName} (${code})"
-        }.getOrDefault("版本未知")
+            s.version(pi.versionName ?: "?", code)
+        }.getOrDefault(s.versionUnknown)
     }
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = {
             TextButton(onClick = onDismiss) {
-                Text("好", color = AccentCyan)
+                Text(s.ok, color = AccentCyan)
             }
         },
-        title = { Text("ℹ️ 关于", fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
+        title = { Text(s.aboutTitle, fontWeight = FontWeight.SemiBold, color = TipHeaderColor) },
         text = {
             Column(horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.fillMaxWidth()) {
                 Text("🦴", fontSize = 40.sp)
                 Spacer(Modifier.height(8.dp))
-                Text("颈椎锻炼", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
+                Text(s.appName, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AccentBlue)
                 Spacer(Modifier.height(4.dp))
                 Text(versionText, fontSize = 13.sp, color = HintColor)
                 Spacer(Modifier.height(10.dp))
-                Text("温和的等长颈椎锻炼计时器\n舒缓 / 等长抗阻 · 语音引导 · 打卡日历",
+                Text(s.aboutDesc,
                     fontSize = 12.sp, color = SubTextColor, textAlign = TextAlign.Center,
                     lineHeight = 18.sp)
             }
@@ -864,20 +997,21 @@ fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
             modifier = Modifier.padding(32.dp).graphicsLayer { this.scaleX = scale; this.scaleY = scale }
         ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(horizontal = 32.dp, vertical = 28.dp)) {
+                val s = L10n.s
                 Text("🎉", fontSize = 56.sp)
                 Spacer(Modifier.height(12.dp))
-                Text("锻炼完成！", fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = AccentCyan, letterSpacing = 2.sp)
+                Text(s.doneTitle, fontSize = 26.sp, fontWeight = FontWeight.ExtraBold, color = AccentCyan, letterSpacing = 2.sp)
                 Spacer(Modifier.height(8.dp))
-                Text("做得很棒，请缓慢起身，避免突然动作", fontSize = 14.sp, color = HintColor, textAlign = TextAlign.Center)
+                Text(s.doneBody, fontSize = 14.sp, color = HintColor, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(4.dp))
-                Text("📅 今日打卡已记录", fontSize = 13.sp, color = DoneGreen, textAlign = TextAlign.Center)
+                Text(s.doneCheckedIn, fontSize = 13.sp, color = DoneGreen, textAlign = TextAlign.Center)
                 Spacer(Modifier.height(24.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     Button(onClick = onAgain, shape = BtnShape, colors = ButtonDefaults.buttonColors(containerColor = AccentBtn)) {
-                        Text("再练一次", fontWeight = FontWeight.SemiBold)
+                        Text(s.again, fontWeight = FontWeight.SemiBold)
                     }
                     OutlinedButton(onClick = onBack, shape = BtnShape, colors = ButtonDefaults.outlinedButtonColors(contentColor = SubTextColor)) {
-                        Text("返回", fontWeight = FontWeight.SemiBold)
+                        Text(s.back, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -889,6 +1023,7 @@ fun DoneOverlay(onAgain: () -> Unit, onBack: () -> Unit) {
 
 @Composable
 fun CalendarScreen(raw: String, onBack: () -> Unit) {
+    val s = L10n.s
     val log = remember(raw) { CheckInLog.parse(raw) }
     var ym by remember { mutableStateOf(YearMonth.now()) }
     BackHandler { onBack() }
@@ -904,7 +1039,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         Spacer(Modifier.height(20.dp))
 
         // No visible back button: system gesture/button back exits (BackHandler above)
-        Text("打卡日历", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AccentBlue,
+        Text(s.calTitle, fontSize = 26.sp, fontWeight = FontWeight.Bold, color = AccentBlue,
             modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Center)
 
         Spacer(Modifier.height(16.dp))
@@ -912,10 +1047,28 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         // ---- Stat strip: one glance = streak / best / month / total ----
         FadeIn {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                StatTile("${log.currentStreak(today)}", "连续", AccentOrange, Modifier.weight(1f))
-                StatTile("${log.longestStreak()}", "最长", AccentCyan, Modifier.weight(1f))
-                StatTile("${log.countInMonth(ym)}", "本月", DoneGreen, Modifier.weight(1f))
-                StatTile("${log.total}", "累计", AccentBlue, Modifier.weight(1f))
+                StatTile("${log.currentStreak(today)}", s.statStreak, AccentOrange, Modifier.weight(1f))
+                StatTile("${log.longestStreak()}", s.statBest, AccentCyan, Modifier.weight(1f))
+                StatTile("${log.countInMonth(ym)}", s.statMonth, DoneGreen, Modifier.weight(1f))
+                StatTile("${log.total}", s.statTotal, AccentBlue, Modifier.weight(1f))
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+
+        // Per-mode check-in counts: month-scoped rows flip with the month nav,
+        // cumulative rows span the whole history (mode bitmask lives per day;
+        // legacy v1 entries carry no mode and only fill day stats)
+        FadeIn(35) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatTile("${log.countModeInMonth(ym, Mode.GENTLE)}", s.statGentleMonth, AccentCyan, Modifier.weight(1f))
+                    StatTile("${log.countModeInMonth(ym, Mode.ISOMETRIC)}", s.statIsoMonth, AccentOrange, Modifier.weight(1f))
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    StatTile("${log.countModeTotal(Mode.GENTLE)}", s.statGentleTotal, AccentCyan, Modifier.weight(1f))
+                    StatTile("${log.countModeTotal(Mode.ISOMETRIC)}", s.statIsoTotal, AccentOrange, Modifier.weight(1f))
+                }
             }
         }
 
@@ -936,14 +1089,14 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp),
                 verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                 IconButton(onClick = { ym = ym.minusMonths(1) }, enabled = ym.isAfter(YearMonth.of(2020, 1)),
-                    modifier = Modifier.semantics { contentDescription = "上一个月" }) {
+                    modifier = Modifier.semantics { contentDescription = L10n.s.prevMonthCd }) {
                     Text("‹", fontSize = 22.sp, color = AccentCyan)
                 }
                 Spacer(Modifier.weight(1f))
-                Text("${ym.year} 年 ${ym.monthValue} 月", fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
+                Text(s.monthTitle(ym.year, ym.monthValue), fontSize = 18.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
                 Spacer(Modifier.weight(1f))
                 IconButton(onClick = { ym = ym.plusMonths(1) },
-                    modifier = Modifier.semantics { contentDescription = "下一个月" }) {
+                    modifier = Modifier.semantics { contentDescription = L10n.s.nextMonthCd }) {
                     Text("›", fontSize = 22.sp, color = AccentCyan)
                 }
             }
@@ -952,7 +1105,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         Spacer(Modifier.height(10.dp))
 
         // Weekday header (Monday first)
-        val weekDays = listOf("一", "二", "三", "四", "五", "六", "日")
+        val weekDays = s.weekDays
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
             weekDays.forEach { w ->
                 Box(Modifier.weight(1f)) {
@@ -980,9 +1133,12 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
                                 val isDay = dayNumber in 1..daysInMonth
                                 val date = if (isDay) month.atDay(dayNumber) else null
                                 val checked = date != null && log.hasInMonth(month, dayNumber)
+                                val gentleDone = checked && log.hasModeInMonth(month, dayNumber, Mode.GENTLE)
+                                val isoDone = checked && log.hasModeInMonth(month, dayNumber, Mode.ISOMETRIC)
                                 val isToday = date == today
                                 Box(Modifier.weight(1f)) {
-                                    DayCell(isDay = isDay, checked = checked, isToday = isToday, day = dayNumber)
+                                    DayCell(isDay = isDay, checked = checked, isToday = isToday, day = dayNumber,
+                                        gentle = gentleDone, isometric = isoDone)
                                 }
                             }
                         }
@@ -992,7 +1148,7 @@ fun CalendarScreen(raw: String, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(14.dp))
-        Text("完成一次锻炼后，当天自动记录打卡 ✦", fontSize = 12.sp, color = MutedColor)
+        Text(s.calHint, fontSize = 12.sp, color = MutedColor)
 
         Spacer(Modifier.height(20.dp))
 
@@ -1042,7 +1198,8 @@ private fun MilestonePill(m: Milestone, total: Int, modifier: Modifier = Modifie
         Text(m.emoji, fontSize = 13.sp, modifier = Modifier.alpha(if (m.reached) 1f else 0.45f))
         Spacer(Modifier.width(4.dp))
         Text(
-            if (m.reached) "${m.days}天" else "差${m.days - total}天",
+            if (m.reached) L10n.s.milestoneReached(m.days)
+            else L10n.s.milestoneRemaining(m.days - total),
             fontSize = 12.sp,
             fontWeight = if (m.reached) FontWeight.SemiBold else FontWeight.Normal,
             color = if (m.reached) DoneGreen else MutedColor,
@@ -1055,6 +1212,7 @@ private fun MilestonePill(m: Milestone, total: Int, modifier: Modifier = Modifie
 @Composable
 private fun ReminderSettingsRow() {
     val context = LocalContext.current
+    val s = L10n.s
     var enabled by remember { mutableStateOf(ReminderScheduler.isEnabled(context)) }
     var time by remember { mutableStateOf(ReminderScheduler.time(context)) }
     var permDenied by remember { mutableStateOf(false) }
@@ -1075,7 +1233,7 @@ private fun ReminderSettingsRow() {
 
     Column(modifier = Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("⏰ 每日提醒", fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
+            Text(s.reminderTitle, fontSize = 16.sp, fontWeight = FontWeight.SemiBold, color = ContentColor)
             Spacer(Modifier.weight(1f))
             Text(
                 "%02d:%02d".format(Locale.ROOT, time.first, time.second),
@@ -1108,14 +1266,14 @@ private fun ReminderSettingsRow() {
                         }
                     }
                 },
-                modifier = Modifier.semantics { contentDescription = "每日提醒开关" },
+                modifier = Modifier.semantics { contentDescription = L10n.s.reminderSwitchCd },
             )
         }
         Text(
             when {
-                permDenied -> "未授予通知权限，无法提醒；可在系统设置中开启"
-                enabled -> "每天到点提醒，当天已完成锻炼则不打扰"
-                else -> "开启后每天到点提醒一次（默认 20:00）"
+                permDenied -> s.reminderDenied
+                enabled -> s.reminderOn
+                else -> s.reminderOff
             },
             fontSize = 12.sp, color = MutedColor,
         )
@@ -1123,7 +1281,8 @@ private fun ReminderSettingsRow() {
 }
 
 @Composable
-fun DayCell(isDay: Boolean, checked: Boolean, isToday: Boolean, day: Int) {
+fun DayCell(isDay: Boolean, checked: Boolean, isToday: Boolean, day: Int,
+            gentle: Boolean = false, isometric: Boolean = false) {
     Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
         if (!isDay) return@Box
         val shape = RoundedCornerShape(10.dp)
@@ -1153,6 +1312,18 @@ fun DayCell(isDay: Boolean, checked: Boolean, isToday: Boolean, day: Int) {
                     else -> ContentColor
                 },
             )
+            // Per-mode pins (v2 mask): cyan = gentle, orange = isometric; both
+            // pins when the day had both workouts. Legacy days show none.
+            if (checked && (gentle || isometric)) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 2.dp),
+                ) {
+                    if (gentle) Box(Modifier.size(3.dp).background(AccentCyan, RoundedCornerShape(50.dp)))
+                    if (isometric) Box(Modifier.size(3.dp).background(AccentOrange, RoundedCornerShape(50.dp)))
+                }
+            }
         }
     }
 }

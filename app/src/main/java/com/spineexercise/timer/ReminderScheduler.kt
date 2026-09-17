@@ -15,9 +15,10 @@ import java.time.ZoneId
 // (same "spine_checkins" file as CheckInStore, so BootReceiver can re-arm
 // after reboot).
 //
-// Uses setInexactRepeating: a daily nudge tolerates minute-level drift, and
-// inexact alarms need no SCHEDULE_EXACT_ALARM special permission. DST shifts
-// may move the clock time by an hour until the next reboot/re-arm — accepted.
+// Daily repetition is a self-perpetuating chain of exact setAlarmClock
+// one-shots (see schedule below): precise timing, Doze-safe, no special
+// permission, and the stored wall-clock time self-corrects across DST since
+// every fire re-arms from the current local time.
 
 object ReminderScheduler {
     private const val KEY_ENABLED = "reminder_enabled"
@@ -97,11 +98,12 @@ object ReminderScheduler {
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
     )
 
-    /** Notification channel (minSdk 26, so always available). */
+    /** Notification channel (minSdk 26, so always available). Re-creating
+     *  with the same ID also updates the name after a language switch. */
     fun ensureChannel(context: Context) {
         val channel = NotificationChannel(
-            CHANNEL_ID, "锻炼提醒", NotificationManager.IMPORTANCE_DEFAULT,
-        ).apply { description = "每日颈椎锻炼提醒" }
+            CHANNEL_ID, L10n.s.notifChannelName, NotificationManager.IMPORTANCE_DEFAULT,
+        ).apply { description = L10n.s.notifChannelDesc }
         context.getSystemService(NotificationManager::class.java)
             ?.createNotificationChannel(channel)
     }
