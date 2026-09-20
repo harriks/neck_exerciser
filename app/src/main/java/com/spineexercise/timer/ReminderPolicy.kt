@@ -28,4 +28,18 @@ object ReminderPolicy {
         val today = now.toLocalDate().atTime(hour, minute)
         return if (today.isAfter(now)) today else today.plusDays(1)
     }
+
+    /**
+     * Whether an exact alarm ([android.app.AlarmManager.setAlarmClock]) may be
+     * used on this device. Exact alarms are ungated below API 31; from API 31
+     * the app must hold an exact-alarm permission — SCHEDULE_EXACT_ALARM on
+     * 31-32, USE_EXACT_ALARM on 33+ (see AndroidManifest). When it is missing,
+     * setAlarmClock throws SecurityException, so callers fall back to a
+     * Doze-tolerant inexact alarm instead of crashing.
+     *
+     * [sdkInt] and [exactAlarmsAllowed] are passed in to keep this decision
+     * pure and unit-testable (the Android glue only supplies the probe).
+     */
+    fun canScheduleExactAlarm(sdkInt: Int, exactAlarmsAllowed: Boolean): Boolean =
+        sdkInt < 31 || exactAlarmsAllowed
 }

@@ -3,6 +3,19 @@
 本项目的版本发布记录。日期以 APK 打包日为准。
 版本号采用三段式（MAJOR.MINOR.PATCH），versionCode 顺次 +1，不跳号。
 
+## [1.3.1] - 2026-09-18
+
+### 修复
+
+- **每日提醒在 Android 12/12L（API 31/32）上崩溃**：`setAlarmClock` 自 API 31 起需要精确闹钟权限，而原清单只声明了 API 33 才有的 `USE_EXACT_ALARM`（本地 SDK `api-versions.xml` 实测 `since="33"`；`setAlarmClock` 的 `@RequiresPermission` 为 `SCHEDULE_EXACT_ALARM`）。缺失时抛 `SecurityException`，且因 `reminder_enabled` 先落盘、`MainActivity.onCreate` 每次启动都重排，开启过一次提醒后 App 将**永久启动即崩**（只能清除数据）。现补 `SCHEDULE_EXACT_ALARM`（`maxSdkVersion="32"`，31/32 安装时自动授予、33+ 仍由 `USE_EXACT_ALARM` 接管），并由新增的纯函数 `ReminderPolicy.canScheduleExactAlarm` 判定，失败时降级为 `setAndAllowWhileIdle` 非精确闹钟而非崩溃。
+- **应用更新 / 改时间 / 改时区后提醒丢失**：`BootReceiver` 由只处理 `BOOT_COMPLETED` 扩展为同时处理 `MY_PACKAGE_REPLACED`、`TIME_SET`、`TIMEZONE_CHANGED`（存的是本地时刻，时钟或时区变化后当次会偏移，下一次触发才自纠正）。
+- **PendingIntent 别名冲突**：状态栏闹钟图标的 showIntent 与通知点击 Intent 同为 requestCode 0 且 `filterEquals` 相同（flags 不参与比较），`FLAG_UPDATE_CURRENT` 下互相覆盖。拆分为 1001/1002/1003 并统一收口到 `ReminderScheduler.openApp()`，通知改用 `notifOpenIntent()`。
+
+### 变更
+
+- 单元测试 63 → 66 例（`ReminderPolicyTest` 新增精确闹钟权限分界用例）；版本 1.3.0(4) → 1.3.1(5)。
+- 已验证：`run-tests.ps1` 66/66、`:app:lintDebug` 0 error、release 构建通过；`aapt2` 实测 APK 权限带 `maxSdkVersion='32'` 且 4 个重排 action 均在。API 37 模拟器实测：开启提醒后启动不崩、闹钟以 `setAlarmClock` 形式注册于下一次触发时刻、crash buffer 干净。API 31/32 真机仍待验证。
+
 ## [1.3.0] - 2026-09-17
 
 ### 新增

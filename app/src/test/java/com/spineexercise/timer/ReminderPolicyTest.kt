@@ -59,4 +59,29 @@ class ReminderPolicyTest {
             ReminderPolicy.nextTriggerAt(0, 0, now),
         )
     }
+
+    // ---------- canScheduleExactAlarm ----------
+
+    @Test
+    fun `exact alarms are ungated before API 31`() {
+        // setAlarmClock needs no permission on API 26-30, whatever the probe says.
+        assertTrue(ReminderPolicy.canScheduleExactAlarm(26, exactAlarmsAllowed = false))
+        assertTrue(ReminderPolicy.canScheduleExactAlarm(30, exactAlarmsAllowed = false))
+    }
+
+    @Test
+    fun `API 31 and 32 are gated by the exact alarm grant`() {
+        // USE_EXACT_ALARM does not exist before API 33, so SCHEDULE_EXACT_ALARM
+        // must be held here or setAlarmClock throws SecurityException.
+        assertFalse(ReminderPolicy.canScheduleExactAlarm(31, exactAlarmsAllowed = false))
+        assertFalse(ReminderPolicy.canScheduleExactAlarm(32, exactAlarmsAllowed = false))
+        assertTrue(ReminderPolicy.canScheduleExactAlarm(31, exactAlarmsAllowed = true))
+    }
+
+    @Test
+    fun `API 33 and later follow the grant`() {
+        assertFalse(ReminderPolicy.canScheduleExactAlarm(33, exactAlarmsAllowed = false))
+        assertTrue(ReminderPolicy.canScheduleExactAlarm(33, exactAlarmsAllowed = true))
+        assertTrue(ReminderPolicy.canScheduleExactAlarm(34, exactAlarmsAllowed = true))
+    }
 }

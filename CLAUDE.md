@@ -283,11 +283,17 @@ paused: 是否暂停
 - **返回确认**：训练进行中（含暂停）按系统返回先弹确认框（「重置并返回/继续锻炼」），
   防止误触丢弃进度；空闲/完成态直接返回
 - **每日提醒**：`ReminderPolicy.kt` 纯函数（`shouldNotify` 当天已打卡则跳过；
-  `nextTriggerAt` 已过时刻滚动到明天）+ `ReminderScheduler.kt`
-  （`setAlarmClock` 精确闹钟 + `USE_EXACT_ALARM` 权限，穿 Doze；触发后由
+  `nextTriggerAt` 已过时刻滚动到明天；`canScheduleExactAlarm` 决定精确或降级）+
+  `ReminderScheduler.kt`
+  （`setAlarmClock` 精确闹钟，穿 Doze；精确闹钟自 API 31 起需权限——31~32 用
+  `SCHEDULE_EXACT_ALARM`（`maxSdkVersion=32`）、33+ 用 `USE_EXACT_ALARM`；
+  缺失时经 `canScheduleExactAlarms()` 判定后降级为 `setAndAllowWhileIdle`
+  非精确闹钟而非崩溃；触发后由
   `ReminderReceiver` 自续期次日——一次性闹钟链取代 `setInexactRepeating`，
   后者文档允许首次触发延迟近一个完整周期=一天，实际"不如期"）+
-  `ReminderReceiver`（先续期再门控发通知）/ `BootReceiver`（开机重排）+
+  `ReminderReceiver`（先续期再门控发通知）/ `BootReceiver`（开机 / 应用更新 /
+  系统改时间或时区均重排：BOOT_COMPLETED + MY_PACKAGE_REPLACED + TIME_SET +
+  TIMEZONE_CHANGED）+
   MainActivity onCreate 兼容性重排（升级迁移）；
   设置入口在日历页底部（Switch + TimePickerDialog；API 33+ 运行时请求 POST_NOTIFICATIONS，
   拒绝则开关回退并提示）；状态栏会显示系统闹钟图标（setAlarmClock 语义，提醒已设定）
@@ -300,7 +306,7 @@ paused: 是否暂停
   TTS 经 `L10n.ttsLocale`（zh-CN / en-US）在 `speakInternal` 惰性重绑；
   引擎播报文案在事件产生时读当前语言，切换后即时生效。Model.tips 已并入 Strings
 - **单元测试**：`app/src/test/.../WorkoutEngineTest.kt` + `TimingConfigTest.kt` +
-  `CheckInLogTest.kt` + `ReminderPolicyTest.kt` + `L10nTest.kt`（JUnit4，共 63 例）
+  `CheckInLogTest.kt` + `ReminderPolicyTest.kt` + `L10nTest.kt`（JUnit4，共 66 例）
 
 ## 7. 已知限制
 

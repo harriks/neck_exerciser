@@ -2,7 +2,6 @@ package com.spineexercise.timer
 
 import android.app.Notification
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -38,17 +37,11 @@ class ReminderReceiver : BroadcastReceiver() {
         if (!nm.areNotificationsEnabled()) return // permission revoked since arming
 
         ReminderScheduler.ensureChannel(context)
-        val open = PendingIntent.getActivity(
-            context, 0,
-            Intent(context, MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
         val notification = Notification.Builder(context, ReminderScheduler.CHANNEL_ID)
             .setSmallIcon(android.R.drawable.ic_menu_my_calendar)
             .setContentTitle(L10n.s.notifTitle)
             .setContentText(L10n.s.notifBody)
-            .setContentIntent(open)
+            .setContentIntent(ReminderScheduler.notifOpenIntent(context))
             .setAutoCancel(true)
             .build()
         nm.notify(NOTIFICATION_ID, notification)

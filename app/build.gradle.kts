@@ -14,9 +14,9 @@ android {
         minSdk = 26
         targetSdk = 34
         // Three-part semver (MAJOR.MINOR.PATCH); versionCode increments by 1
-        // per release (last released: 1.2 = code 3).
-        versionCode = 4
-        versionName = "1.3.0"
+        // per release (last released: 1.3.0 = code 4).
+        versionCode = 5
+        versionName = "1.3.1"
     }
     signingConfigs {
         create("release") {
