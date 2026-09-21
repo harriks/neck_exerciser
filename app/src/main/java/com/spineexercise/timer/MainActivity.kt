@@ -614,6 +614,10 @@ fun TimerRing(state: TimerState) {
 fun StageProgress(state: TimerState) {
     val completed = state.completedGroups
     val total = state.totalGroupsAll
+    // At DONE the engine keeps si/gi on the last rep (finish() doesn't advance),
+    // so paint the whole bar green instead of leaving the last segment "current".
+    val barDone = if (state.phase == Phase.DONE) total else completed
+    val stages = Config.stagesOf(state.mode)
 
     Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 8.dp)) {
         Row(
@@ -639,16 +643,73 @@ fun StageProgress(state: TimerState) {
 
         Spacer(Modifier.height(6.dp))
 
-        // Use stable keys to avoid rebuilding unchanged segments
+        // One segment per group; a wider fixed gap marks each stage boundary so
+        // the isometric stages read as regions on the bar (single-stage modes
+        // get no boundary spacers and render exactly as before).
         Row(horizontalArrangement = Arrangement.spacedBy(3.dp), modifier = Modifier.padding(horizontal = 16.dp)) {
-            repeat(total) { i ->
-                val color = when {
-                    i < completed -> DoneGreen
-                    i == completed -> AccentOrange
-                    else -> Color.White.copy(alpha = 0.18f) // brighter track, visible on navy
+            var segIdx = 0
+            stages.forEachIndexed { k, st ->
+                if (k > 0) Spacer(Modifier.width(10.dp))
+                repeat(st.dirs.size * st.groups) {
+                    val i = segIdx++
+                    val color = when {
+                        i < barDone -> DoneGreen
+                        i == barDone -> AccentOrange
+                        else -> Color.White.copy(alpha = 0.18f) // brighter track, visible on navy
+                    }
+                    key(i) {
+                        Box(Modifier.weight(1f).height(8.dp).background(color, SegShape))
+                    }
                 }
-                key(i) {
-                    Box(Modifier.weight(1f).height(8.dp).background(color, SegShape))
+            }
+        }
+
+        // Overall stage band (multi-stage modes): block widths proportional to
+        // each stage's group count, labeled and filled by its own progress —
+        // shows where 正向/侧向/弹力带 sit on the bar and how far each has come.
+        if (stages.size > 1) {
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(horizontal = 16.dp)) {
+                stages.forEachIndexed { k, st ->
+                    val reps = st.dirs.size * st.groups
+                    val done = if (state.phase == Phase.DONE) reps
+                        else when { k < state.si -> reps; k == state.si -> state.gi; else -> 0 }
+                    val stageDone = done >= reps
+                    val stageCurrent = !stageDone && state.phase != Phase.DONE && k == state.si
+                    val color = when {
+                        stageDone -> DoneGreen
+                        stageCurrent -> AccentOrange
+                        else -> Color.Transparent
+                    }
+                    val labelColor = when {
+                        stageDone -> DoneGreen
+                        stageCurrent -> AccentOrange
+                        else -> HintColor
+                    }
+                    // coerce: settings UI clamps groups to 1..20, but a
+                    // hand-corrupted stored JSON could yield reps 0 — weight(0)
+                    // is invalid, so clamp defensively (fill guarded by done>0).
+                    Column(modifier = Modifier.weight(reps.coerceAtLeast(1).toFloat())) {
+                        Box(
+                            Modifier.fillMaxWidth().height(10.dp)
+                                .background(Color.White.copy(alpha = 0.18f), SegShape)
+                        ) {
+                            if (done > 0) {
+                                Box(
+                                    Modifier.fillMaxWidth((done.toFloat() / reps).coerceIn(0f, 1f))
+                                        .height(10.dp).background(color, SegShape)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            L10n.stage(st.name),
+                            fontSize = 10.sp, lineHeight = 11.sp,
+                            fontWeight = if (stageCurrent) FontWeight.SemiBold else FontWeight.Normal,
+                            color = labelColor, textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
                 }
             }
         }

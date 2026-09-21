@@ -99,6 +99,10 @@ internal fun buildState(mode: Mode, si: Int = 0, di: Int = 0, gi: Int = 0,
 
 sealed class EngineEvent {
     data class Speak(val text: String) : EngineEvent()
+    /** Last-3-seconds countdown cue; hosts read the number aloud (TTS reads
+     *  digits in the active locale: zh "三", en "three"). Kept separate from
+     *  [Speak] so per-second ticking never flushes a phase announcement. */
+    data class Countdown(val seconds: Int) : EngineEvent()
     enum class SfxType { START, SWITCH, TICK, DONE }
     data class Sfx(val type: SfxType) : EngineEvent()
 }
@@ -120,6 +124,14 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
 
     private var _state: TimerState = buildState(Mode.GENTLE)
     val state: TimerState get() = _state
+
+    /**
+     * Whether the OTHER mode was already completed (checked in) earlier today.
+     * The host refreshes this from the check-in log before each start; finish()
+     * picks the completion cue from it: a per-mode line ("舒缓训练完成") in the
+     * normal case, or the all-done celebration once both modes are done today.
+     */
+    var otherModeDoneToday: Boolean = false
 
     /**
      * Absolute end timestamp of the current phase, valid only while actively
@@ -219,6 +231,10 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
             // Last-3-seconds beep (matches legacy behavior: any phase, on decrement)
             if (remaining < st.countdown && remaining in 1..3) {
                 pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.TICK)
+                // Spoken 3-2-1 alongside the beep, so the count is clear
+                // eyes-free before every phase switch (opening 3s prepare
+                // announces 2-1 right after its start cue).
+                pendingEvents += EngineEvent.Countdown(remaining)
             }
             _state = st.copy(countdown = remaining, elapsed = elapsedSec)
         }
@@ -354,7 +370,10 @@ class WorkoutEngine(private val nowMs: () -> Long = System::currentTimeMillis) {
             countdown = 0, elapsed = elapsedSec,
         )
         phaseEndMs = Long.MAX_VALUE
-        pendingEvents += EngineEvent.Speak(L10n.s.finishCue)
+        pendingEvents += EngineEvent.Speak(
+            if (otherModeDoneToday) L10n.s.finishCue
+            else L10n.s.modeDoneCue(_state.mode)
+        )
         pendingEvents += EngineEvent.Sfx(EngineEvent.SfxType.DONE)
     }
 }

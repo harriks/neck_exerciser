@@ -139,7 +139,8 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 | 后续切换发力 | "请换右手发力/请换左手发力" | contract 切换 |
 | 进入放松 | "放松" | relax 开始 |
 | 暂停 | "已暂停" | togglePause |
-| 完成 | "完成，做得好"（等长抗阻："恭喜，全部完成，做得好"） | finishWorkout |
+| 完成 | 按当前模式："舒缓训练完成" / "等长抗阻训练完成"；若另一模式今日已打卡（`otherModeDoneToday`，ViewModel 每次开始时从 CheckInStore 同步）→ "恭喜，全部完成，做得好" | finishWorkout |
+| 倒计时报时 | "3" / "2" / "1"（数字由 TTS 按当前语言读出，与滴声同发） | 每个倒计时阶段（prepare/contract/relax）最后 3 秒递减时；开局 3 秒准备期读 2-1（"3"由开始播报覆盖） |
 
 **等长抗阻阶段切换播报**（两段式；TTS 每次播报清空队列，先后不冲突）：
 - 阶段切换准备期开始（从放松中划出的 `stagePrepareSec` 秒黄色倒计时）：`侧向抗阻训练，请准备` / `弹力带训练，请准备`
@@ -189,7 +190,11 @@ idle ──[开始]──> prepare(3s) ──> contract ──> relax ──> co
 - **倒计时数字**：) contract/relax 时剩余 >3 秒为绿色、最后 3 秒为红色，0.6s 平滑过渡)
 - **圆环内大字**：倒计时秒数
 - **阶段进度 stageName**：`📍 正向抗阻 (1/15)` 全局组数进度
-- **进度条**：彩色方块，已完成绿色、当前橙色、未完成暗色
+- **进度条**：彩色方块，已完成绿色、当前橙色、未完成暗色；等长抗阻在阶段边界用加宽间距分区
+  （正向→侧向→弹力带），下方追加「总体进度带」——3 个按组数比例宽度的分段块
+  （正向 6 / 侧向 6 / 弹力带 3），各标注阶段名并按阶段内进度填充
+  （完成=绿、进行中=橙局部填充、未开始=空槽；DONE 时全部绿色）；
+  DONE 时分段条也整体转绿（引擎 finish 不推进 si/gi，末段不再残留橙色）
 - **总用时**：进度条右侧显示 `⏱ 0:00`
 
 #### 锻炼要点弹窗
@@ -253,7 +258,8 @@ paused: 是否暂停
 - **WorkoutEngine.kt**：纯 Kotlin 状态机（无 Android 依赖）
   - 锚点计时：每个阶段记录绝对结束时间戳，倒计时/总用时零漂移
   - 暂停语义：`phaseEndMs` 按暂停时长平移——恢复不跳阶段，elapsed 不计暂停时间
-  - 事件输出：语音/音效以 `EngineEvent`（Speak/Sfx）形式发出，由 ViewModel 播放
+  - 事件输出：语音/音效以 `EngineEvent`（Speak/Countdown/Sfx）形式发出，由 ViewModel 播放
+    （Countdown=最后 3 秒报秒，独立于 Speak 以免每秒 flush 冲掉阶段播报）
   - 推进统一走 `advanceGroup()`：舒缓=单阶段配置，与等长抗阻共用同一路径，零模式分支
   - 阶段切换（等长抗阻）：准备期从最后一组放松中划出（`beginRelax` 缩短 relax 并在
     TimerState 暴露 `relaxTotalSec` 实际时长；`advanceAndContinue` 按

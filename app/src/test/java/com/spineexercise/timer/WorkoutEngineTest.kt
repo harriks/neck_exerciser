@@ -118,7 +118,7 @@ class WorkoutEngineTest {
         advanceSeconds(8 + 5) // rep 8 relax done -> finish
         val final = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
         assertEquals(Phase.DONE, engine.state.phase)
-        assertTrue("finish speaks=$final", final.contains("恭喜，全部完成，做得好"))
+        assertTrue("finish speaks=$final", final.contains("舒缓训练完成"))
     }
 
     @Test
@@ -142,6 +142,25 @@ class WorkoutEngineTest {
         advanceMs(1000)      // countdown 3 -> tick
         val sfx = engine.drainEvents().filterIsInstance<EngineEvent.Sfx>()
         assertTrue(sfx.any { it.type == EngineEvent.SfxType.TICK })
+    }
+
+    @Test
+    fun `last 3 seconds announce a spoken countdown number each decrement`() {
+        engine.setMode(Mode.GENTLE)
+        engine.start()
+        engine.drainEvents() // clear start events
+        // Opening 3s prepare announces 2-1 (3 is covered by the start cue)
+        advanceMs(1000)
+        assertTrue(engine.drainEvents().contains(EngineEvent.Countdown(2)))
+        advanceMs(1000)
+        assertTrue(engine.drainEvents().contains(EngineEvent.Countdown(1)))
+        // Contract (8s) announces the full 3-2-1 on its tail
+        advanceMs(1000) // prepare done -> contract begins
+        engine.drainEvents()
+        advanceSeconds(5) // remaining 7 -> 3
+        assertTrue(engine.drainEvents().contains(EngineEvent.Countdown(3)))
+        // No numbers outside the last-3 window
+        assertTrue(engine.drainEvents().none { it is EngineEvent.Countdown })
     }
 
     @Test
@@ -271,6 +290,18 @@ class WorkoutEngineTest {
     @Test
     fun `isometric finish announces completion`() {
         engine.setMode(Mode.ISOMETRIC)
+        engine.start()
+        val total = 3 + 6 * 30 + 6 * 30 + 3 * 45
+        advanceSeconds(total)
+        val events = engine.drainEvents().filterIsInstance<EngineEvent.Speak>().map { it.text }
+        assertTrue("finish speaks=$events",
+            events.any { it.contains("等长抗阻训练完成") })
+    }
+
+    @Test
+    fun `finish celebrates all done when the other mode was already completed today`() {
+        engine.setMode(Mode.ISOMETRIC)
+        engine.otherModeDoneToday = true
         engine.start()
         val total = 3 + 6 * 30 + 6 * 30 + 3 * 45
         advanceSeconds(total)

@@ -91,7 +91,8 @@ interface Strings {
     val pausedCue: String               // 已暂停
     val resumeCue: String               // 继续锻炼
     val resetCue: String                // 重置
-    val finishCue: String               // 恭喜，全部完成，做得好
+    val finishCue: String               // 恭喜，全部完成，做得好（今日两种模式都已完成时）
+    fun modeDoneCue(mode: Mode): String // 舒缓训练完成 / 等长抗阻训练完成
 
     // ---- Timer state display (TimerState computed props) ----
     val ready: String                   // 准备就绪 / 等待中
@@ -227,6 +228,8 @@ object ZhStrings : Strings {
     override val resumeCue = "继续锻炼"
     override val resetCue = "重置"
     override val finishCue = "恭喜，全部完成，做得好"
+    override fun modeDoneCue(mode: Mode) =
+        if (mode == Mode.GENTLE) "舒缓训练完成" else "等长抗阻训练完成"
 
     override val ready = "准备就绪"
     override val waiting = "等待中"
@@ -366,6 +369,8 @@ object EnStrings : Strings {
     override val resumeCue = "Resuming"
     override val resetCue = "Reset"
     override val finishCue = "Congratulations, all done, great job"
+    override fun modeDoneCue(mode: Mode) =
+        if (mode == Mode.GENTLE) "Gentle workout complete" else "Isometric workout complete"
 
     override val ready = "Ready"
     override val waiting = "Waiting"

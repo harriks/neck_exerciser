@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 
 // ===================== ViewModel =====================
 // The state machine lives in WorkoutEngine (pure Kotlin, unit-testable).
@@ -67,9 +68,23 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     // ===================== Actions =====================
 
     fun startWorkout() {
+        syncFinishCue()
         engine.start()
         syncAndPlay()
         startTick()
+    }
+
+    /**
+     * Pick the finish-cue branch before the run: when the OTHER mode was
+     * already checked in today, the completion announcement becomes the
+     * all-done celebration ("恭喜，全部完成"); otherwise it names the mode
+     * just finished ("舒缓训练完成"). Re-read on every start so a mode
+     * completed earlier in the same app session counts too.
+     */
+    private fun syncFinishCue() {
+        val other = Mode.values().first { it != engine.state.mode }
+        engine.otherModeDoneToday =
+            CheckInLog.parse(CheckInStore.load(getApplication())).hasMode(LocalDate.now(), other)
     }
 
     fun togglePause() {
@@ -127,6 +142,8 @@ class TimerViewModel(app: Application) : AndroidViewModel(app) {
     private fun handleEvent(event: EngineEvent) {
         when (event) {
             is EngineEvent.Speak -> speak(event.text)
+            // Spoken last-3-seconds count; digits read in the active locale
+            is EngineEvent.Countdown -> speak(event.seconds.toString())
             is EngineEvent.Sfx -> when (event.type) {
                 EngineEvent.SfxType.START -> sfxStart()
                 EngineEvent.SfxType.SWITCH -> sfxSwitch()
